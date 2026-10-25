@@ -7,7 +7,18 @@
 
 import { braveWeb, type WebResult } from "./images";
 
-const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+// Free-tier models to try in order. Each has its own free allowance, so if one is busy
+// or has no quota for this key, the next one usually works.
+const MODELS = [
+  ...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []),
+  "gemini-3.8-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3.1-flash-lite",
+].filter((m, i, a) => a.indexOf(m) === i);
+
+// Remember which model last worked so later requests in the same instance start there.
+let preferred = 0;
 
 export type Range = { low: number; mid: number; high: number };
 
@@ -77,46 +88,63 @@ type Part = { text: string } | { inline_data: { mime_type: string; data: string 
 
 async function gemini(parts: Part[], system: string): Promise<Record<string, unknown>> {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY is not set");
+  if (!key) throw new Error("GEMINI_API_KEY is not set in Vercel");
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents: [{ role: "user", parts }],
-        generationConfig: { response_mime_type: "application/json", temperature: 0.2 },
-      }),
-      signal: AbortSignal.timeout(60000),
-    });
+  let lastError = "";
+  for (let n = 0; n < MODELS.length; n++) {
+    const idx = (preferred + n) % MODELS.length;
+    const model = MODELS[idx];
 
-    if (res.status === 429 || res.status === 503) {
-      // Free-tier rate limit or busy — wait a little and retry.
-      if (attempt < 2) {
-        await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
-        continue;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts }],
+          generationConfig: { response_mime_type: "application/json", temperature: 0.2 },
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        let msg = body;
+        try { msg = (JSON.parse(body) as { error?: { message?: string } }).error?.message ?? body; } catch { /* keep raw */ }
+        lastError = `${model}: ${res.status} ${msg}`.slice(0, 400);
+        console.error("Gemini error", lastError);
+
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
+          if (/api key/i.test(msg)) throw new Error("Gemini rejected the API key — check GEMINI_API_KEY in Vercel");
+          if (/location|region|country/i.test(msg)) throw new Error(`Gemini isn't available for this account: ${msg}`);
+        }
+        // Quota/limit-0: no point retrying this model, move to the next one.
+        if (res.status === 429 && /limit: ?0|quota/i.test(msg) && !/per ?minute/i.test(msg)) break;
+        // Busy or per-minute limit: brief pause, one retry, then next model.
+        if (res.status === 429 || res.status >= 500) {
+          if (attempt === 0) { await new Promise((r) => setTimeout(r, 2500)); continue; }
+          break;
+        }
+        // 404 (model not offered to this key) or other: try the next model.
+        break;
       }
-      throw new Error("Gemini's free tier is busy or at its limit — wait a minute and try again");
-    }
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      console.error("Gemini error", res.status, detail);
-      throw new Error(`Card lookup failed (Gemini ${res.status})`);
-    }
 
-    type GeminiResponse = { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-    const data = (await res.json()) as GeminiResponse;
-    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    try {
-      const raw = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
-      return JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
-    } catch {
-      if (attempt < 2) continue;
-      throw new Error("Couldn't read the card details from the AI response — try again");
+      type GeminiResponse = { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] };
+      const data = (await res.json()) as GeminiResponse;
+      const text = data.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "";
+      try {
+        const raw = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
+        const parsed = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+        preferred = idx;
+        return parsed;
+      } catch {
+        lastError = `${model}: response wasn't valid JSON`;
+        if (attempt === 0) continue;
+        break;
+      }
     }
   }
-  throw new Error("Card lookup failed");
+  throw new Error(`Gemini couldn't process the card (all free models busy or unavailable). Google said — ${lastError}`);
 }
 
 function cleanValue(v: unknown): Range | null {
