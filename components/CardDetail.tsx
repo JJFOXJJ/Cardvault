@@ -86,7 +86,6 @@ export default function CardDetail({ card: initial }: { card: Card }) {
 
   return (
     <div className="stack">
-      <Link href="/" className="muted small">← Collection</Link>
       {error && <p className="error">{error}</p>}
 
       <div className="detail">

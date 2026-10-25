@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { CATEGORIES, CONDITIONS } from "@/lib/client";
 
 export type Fields = {
@@ -45,6 +46,15 @@ export default function CardFields({ value, onChange }: { value: Fields; onChang
 
   const categories = CATEGORIES.includes(value.category) ? CATEGORIES : [...CATEGORIES, value.category];
 
+  // Existing collection names, offered as suggestions so new cards reuse the same spelling.
+  const [sets, setSets] = useState<string[]>([]);
+  useEffect(() => {
+    fetch("/api/collections")
+      .then((r) => (r.ok ? r.json() : { collections: [] }))
+      .then((d: { collections?: { name: string }[] }) => setSets((d.collections ?? []).map((c) => c.name)))
+      .catch(() => {});
+  }, []);
+
   return (
     <div className="stack">
       <label className="field"><span>Card title</span><input value={value.name} onChange={set("name")} placeholder="e.g. Michael Jordan #57" /></label>
@@ -54,7 +64,10 @@ export default function CardFields({ value, onChange }: { value: Fields; onChang
         </label>
         <label className="field"><span>Player / character</span><input value={value.subject} onChange={set("subject")} /></label>
       </div>
-      <label className="field"><span>Collection / set</span><input value={value.set_name} onChange={set("set_name")} placeholder="e.g. 1992 Marvel Masterpieces" /></label>
+      <label className="field"><span>Collection / set</span>
+        <input value={value.set_name} onChange={set("set_name")} placeholder="e.g. 1992 Marvel Masterpieces" list="cv-sets" autoComplete="off" />
+        <datalist id="cv-sets">{sets.map((n) => <option key={n} value={n} />)}</datalist>
+      </label>
       <div className="grid-2">
         <label className="field"><span>Year</span><input value={value.year} onChange={set("year")} /></label>
         <label className="field"><span>Manufacturer</span><input value={value.manufacturer} onChange={set("manufacturer")} /></label>

@@ -6,6 +6,7 @@
 //   3. Gemini reads those search snippets and estimates the value.
 
 import { braveWeb, type WebResult } from "./images";
+import { snapToExisting } from "./collections";
 
 // Free-tier models to try in order. Each has its own free allowance, so if one is busy
 // or has no quota for this key, the next one usually works.
@@ -208,12 +209,15 @@ export async function priceCard(description: string, query?: string): Promise<Va
   };
 }
 
-export async function identifyCard(images: { mediaType: string; data: string }[], hint?: string): Promise<Identification> {
+export async function identifyCard(images: { mediaType: string; data: string }[], hint?: string, existingSets: string[] = []): Promise<Identification> {
   const parts: Part[] = images.map((img) => ({ inline_data: { mime_type: img.mediaType, data: img.data } }));
   parts.push({
     text:
       (images.length > 1 ? "The first photo is the front of the card, the second is the back. " : "") +
       "Identify this trading card." +
+      (existingSets.length
+        ? `\n\nThe owner's vault already has these collections:\n${existingSets.slice(0, 200).map((n) => `- ${n}`).join("\n")}\nIf this card belongs to one of them, set "set_name" to that EXACT name (same spelling). Only use a new name if it's genuinely a different set.`
+        : "") +
       (hint?.trim() ? `\n\nThe owner adds this hint (trust it): ${hint.trim()}` : ""),
   });
 
@@ -228,7 +232,7 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
     subject: str("subject"),
     year: str("year"),
     manufacturer: str("manufacturer"),
-    set_name: str("set_name"),
+    set_name: snapToExisting(str("set_name"), existingSets),
     card_number: str("card_number"),
     variant: str("variant"),
     graded: str("graded"),
