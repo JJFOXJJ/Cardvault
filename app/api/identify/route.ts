@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     let value = card.value_usd;
 
     if (card.is_pokemon && card.subject) {
-      const matches = await pokemonImages(card.subject, card.card_number, card.set_name);
+      const matches = await pokemonImages(card.subject, card.card_number, card.set_name).catch(() => []);
       candidates = matches;
       // Prefer TCGplayer's market price for an exact Pokémon match when the AI found nothing.
       const exact = matches[0];
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       }
     }
     if (candidates.length < 4) {
-      candidates = [...candidates, ...(await braveImages(card.image_query, 8 - candidates.length))];
+      candidates = [...candidates, ...(await braveImages(card.image_query, 8 - candidates.length).catch(() => []))];
     }
 
     const fx = await usdToAud();

@@ -16,6 +16,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const v = await priceCard(describeCard(card));
+    if (v.failed) return jsonError(v.value_notes, 503);
     const update = {
       ...(await valueColumns(v.value_usd)),
       value_notes: v.value_notes,

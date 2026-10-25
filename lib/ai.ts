@@ -42,7 +42,7 @@ export type Identification = {
   is_pokemon: boolean;
 };
 
-export type Valuation = Pick<Identification, "value_usd" | "value_notes" | "price_sources">;
+export type Valuation = Pick<Identification, "value_usd" | "value_notes" | "price_sources"> & { failed?: boolean };
 
 const CATEGORIES = "Marvel, Basketball, The Simpsons, Pokémon, Other";
 
@@ -86,26 +86,40 @@ Reply with a JSON object:
 
 type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
-async function gemini(parts: Part[], system: string): Promise<Record<string, unknown>> {
+async function gemini(parts: Part[], system: string, budgetMs = 50000): Promise<Record<string, unknown>> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY is not set in Vercel");
 
   let lastError = "";
+  const deadline = Date.now() + budgetMs;
   for (let n = 0; n < MODELS.length; n++) {
     const idx = (preferred + n) % MODELS.length;
     const model = MODELS[idx];
 
     for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: system }] },
-          contents: [{ role: "user", parts }],
-          generationConfig: { response_mime_type: "application/json", temperature: 0.2 },
-        }),
-        signal: AbortSignal.timeout(60000),
-      });
+      const remaining = deadline - Date.now();
+      if (remaining < 5000) {
+        throw new Error(`Gemini is too slow right now — try again in a minute. (${lastError || "timed out"})`);
+      }
+      let res: Response;
+      try {
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: system }] },
+            contents: [{ role: "user", parts }],
+            generationConfig: { response_mime_type: "application/json", temperature: 0.2 },
+          }),
+          // One slow model shouldn't use up the whole budget.
+          signal: AbortSignal.timeout(Math.min(35000, remaining)),
+        });
+      } catch (e) {
+        // Timeout or network error: treat like "busy" and move on to the next model.
+        lastError = `${model}: ${e instanceof Error && e.name === "TimeoutError" ? "timed out" : "network error"}`;
+        console.error("Gemini fetch failed", lastError, e);
+        break;
+      }
 
       if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -175,7 +189,13 @@ export async function priceCard(description: string, query?: string): Promise<Va
         .join("\n\n")
     : "(No web results available.)";
 
-  const j = await gemini([{ text: `CARD\n${description}\n\nSEARCH RESULTS\n${snippets}` }], PRICE_PROMPT);
+  let j: Record<string, unknown>;
+  try {
+    j = await gemini([{ text: `CARD\n${description}\n\nSEARCH RESULTS\n${snippets}` }], PRICE_PROMPT, 40000);
+  } catch (e) {
+    // Don't lose a good identification just because pricing timed out.
+    return { failed: true, value_usd: null, value_notes: `Couldn't estimate a value this time (${e instanceof Error ? e.message : "error"}). Tap "Update value" later.`, price_sources: [] };
+  }
   return {
     value_usd: cleanValue(j.value_usd),
     value_notes: typeof j.value_notes === "string" ? j.value_notes : "",
@@ -192,7 +212,7 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
       (hint?.trim() ? `\n\nThe owner adds this hint (trust it): ${hint.trim()}` : ""),
   });
 
-  const j = await gemini(parts, IDENTIFY_PROMPT);
+  const j = await gemini(parts, IDENTIFY_PROMPT, 55000);
   const str = (k: string) => (typeof j[k] === "string" && (j[k] as string).trim() ? (j[k] as string).trim() : null);
 
   const card = {
@@ -216,7 +236,9 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
 
   return {
     ...card,
-    ...valuation,
+    value_usd: valuation.value_usd,
+    value_notes: valuation.value_notes,
+    price_sources: valuation.price_sources,
     image_query: str("image_query") ?? `${fallbackQuery} card`,
     price_query,
     is_pokemon: Boolean(j.is_pokemon) || /pok[eé]mon/i.test(card.category),
