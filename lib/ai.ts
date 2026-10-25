@@ -91,6 +91,7 @@ async function gemini(parts: Part[], system: string, budgetMs = 50000): Promise<
   if (!key) throw new Error("GEMINI_API_KEY is not set in Vercel");
 
   let lastError = "";
+  const tried: string[] = [];
   const deadline = Date.now() + budgetMs;
   for (let n = 0; n < MODELS.length; n++) {
     const idx = (preferred + n) % MODELS.length;
@@ -117,6 +118,7 @@ async function gemini(parts: Part[], system: string, budgetMs = 50000): Promise<
       } catch (e) {
         // Timeout or network error: treat like "busy" and move on to the next model.
         lastError = `${model}: ${e instanceof Error && e.name === "TimeoutError" ? "timed out" : "network error"}`;
+        tried.push(`${model} (${e instanceof Error && e.name === "TimeoutError" ? "timed out" : "network error"})`);
         console.error("Gemini fetch failed", lastError, e);
         break;
       }
@@ -126,6 +128,7 @@ async function gemini(parts: Part[], system: string, budgetMs = 50000): Promise<
         let msg = body;
         try { msg = (JSON.parse(body) as { error?: { message?: string } }).error?.message ?? body; } catch { /* keep raw */ }
         lastError = `${model}: ${res.status} ${msg}`.slice(0, 400);
+        tried.push(`${model} (${res.status === 503 ? "overloaded" : res.status === 429 ? "rate limit" : res.status === 404 ? "not available" : res.status})`);
         console.error("Gemini error", lastError);
 
         if (res.status === 400 || res.status === 401 || res.status === 403) {
@@ -134,8 +137,10 @@ async function gemini(parts: Part[], system: string, budgetMs = 50000): Promise<
         }
         // Quota/limit-0: no point retrying this model, move to the next one.
         if (res.status === 429 && /limit: ?0|quota/i.test(msg) && !/per ?minute/i.test(msg)) break;
-        // Busy or per-minute limit: brief pause, one retry, then next model.
-        if (res.status === 429 || res.status >= 500) {
+        // Overloaded ("high demand"): don't wait around — go straight to the next model.
+        if (res.status >= 500) break;
+        // Per-minute rate limit: brief pause, one retry, then next model.
+        if (res.status === 429) {
           if (attempt === 0) { await new Promise((r) => setTimeout(r, 2500)); continue; }
           break;
         }
@@ -158,7 +163,7 @@ async function gemini(parts: Part[], system: string, budgetMs = 50000): Promise<
       }
     }
   }
-  throw new Error(`Gemini couldn't process the card (all free models busy or unavailable). Google said — ${lastError}`);
+  throw new Error(`Gemini's free models are all busy right now — try again in a few minutes. Tried: ${[...new Set(tried)].join(", ") || lastError}`);
 }
 
 function cleanValue(v: unknown): Range | null {
