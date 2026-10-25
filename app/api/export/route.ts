@@ -14,7 +14,7 @@ const cell = (v: unknown) => {
 export async function GET() {
   const denied = await requireAuth();
   if (denied) return denied;
-  const { data } = await db().from("cards").select("*").order("set_name").order("name");
+  const { data } = await db().from("cards").select("*").neq("status", "pending").order("set_name").order("name");
   const rows = (data ?? []) as Card[];
   const csv = [
     [...COLUMNS, "total_aud_mid"].join(","),

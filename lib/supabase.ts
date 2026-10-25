@@ -43,6 +43,10 @@ export type Card = {
   price_sources: { title: string; url: string }[];
   priced_at: string | null;
   confidence: string | null;
+  status: "pending" | "catalogued";
+  back_photo_url: string | null;
+  hint: string | null;
+  last_error: string | null;
 };
 
 /** Fields the client is allowed to set when creating or editing a card. */
@@ -50,13 +54,14 @@ export const EDITABLE_FIELDS = [
   "category", "name", "subject", "year", "manufacturer", "set_name", "card_number",
   "variant", "graded", "condition", "quantity", "notes",
   "value_usd_mid", "aud_low", "aud_mid", "aud_high", "fx_usd_aud",
-  "value_notes", "price_sources", "priced_at", "confidence",
+  "value_notes", "price_sources", "priced_at", "confidence", "status", "hint", "last_error",
 ] as const;
 
 export function pickEditable(input: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
   for (const k of EDITABLE_FIELDS) if (k in input) out[k] = input[k];
   if ("quantity" in out) out.quantity = Math.max(1, Math.floor(Number(out.quantity) || 1));
+  if ("status" in out && out.status !== "pending" && out.status !== "catalogued") delete out.status;
   return out;
 }
 
@@ -100,4 +105,17 @@ export async function removeStoredImage(publicUrl: string | null) {
   const i = publicUrl.indexOf(marker);
   if (i === -1) return;
   await db().storage.from(BUCKET).remove([publicUrl.slice(i + marker.length)]);
+}
+
+/** Load stored photos back as base64 for the AI. */
+export async function photosAsBase64(urls: (string | null)[]) {
+  const out: { mediaType: string; data: string }[] = [];
+  for (const url of urls) {
+    if (!url) continue;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`Couldn't load the saved photo (${res.status})`);
+    const type = (res.headers.get("content-type") || "image/jpeg").split(";")[0];
+    out.push({ mediaType: type.startsWith("image/") ? type : "image/jpeg", data: Buffer.from(await res.arrayBuffer()).toString("base64") });
+  }
+  return out;
 }

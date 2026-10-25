@@ -7,6 +7,8 @@ A private, PIN-locked trading card catalogue. Photograph a card and the app:
 3. **Finds a clean picture** of the card online (Brave image search, or the official Pokémon TCG database for Pokémon) and stores that instead of your photo. Your photo is kept too, for condition reference.
 4. **Files it into its collection/set**, with totals per set and for the whole vault.
 
+**Save for later:** snap cards (or upload a batch from your camera roll) without waiting for identification. Photos are stored immediately in a waiting list; identify them one by one with the review screen, or tap **Identify all** to file them automatically.
+
 Also: search and filter, per-card editing, "Update value" to re-price later, change picture, CSV export (handy for insurance), and it installs to your phone's home screen.
 
 Stack: Next.js 16 on Vercel · Supabase (Postgres + Storage) · Gemini API (free tier) · Brave Search API (free monthly credit). **Runs at $0/month for a personal collection.**
@@ -61,6 +63,9 @@ npm run dev                  # http://localhost:3000
 
 ---
 
+## Updating an existing database
+If you set up Supabase before the waiting list was added, run `supabase/migrations/002_waiting_list.sql` once in the SQL Editor. (New setups get it from `schema.sql`.)
+
 ## How the PIN lock works
 - Every page and API route requires a signed, HTTP-only session cookie (30 days). Without it you're sent to the PIN pad.
 - 5 wrong PINs from one IP locks that IP out for 15 minutes.
@@ -84,7 +89,8 @@ npm run dev                  # http://localhost:3000
 app/
   login/            PIN pad
   page.tsx          Collection (grouped by set, totals, search, filters)
-  add/              Scan → review → save
+  add/              Scan → review → save (or save for later / bulk upload)
+  pending/          Waiting list, identify one or all
   card/[id]/        Card detail, edit, re-price, change picture, delete
   api/              login, identify, images, cards, reprice, export
 lib/

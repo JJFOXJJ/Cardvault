@@ -58,3 +58,10 @@ alter table public.login_attempts enable row level security;
 insert into storage.buckets (id, name, public)
 values ('card-images', 'card-images', true)
 on conflict (id) do nothing;
+
+-- Waiting list ("save for later") — same as migrations/002_waiting_list.sql
+alter table public.cards add column if not exists status text not null default 'catalogued';
+alter table public.cards add column if not exists back_photo_url text;
+alter table public.cards add column if not exists hint text;
+alter table public.cards add column if not exists last_error text;
+create index if not exists cards_status_idx on public.cards (status);

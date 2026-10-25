@@ -41,10 +41,11 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const denied = await requireAuth();
   if (denied) return denied;
   const { id } = await params;
-  const { data: card } = await db().from("cards").select("image_url, photo_url").eq("id", id).single();
+  const { data: card } = await db().from("cards").select("image_url, photo_url, back_photo_url").eq("id", id).single();
   const { error } = await db().from("cards").delete().eq("id", id);
   if (error) return jsonError(error.message, 500);
   await removeStoredImage(card?.image_url ?? null);
   if (card?.photo_url !== card?.image_url) await removeStoredImage(card?.photo_url ?? null);
+  await removeStoredImage(card?.back_photo_url ?? null);
   return NextResponse.json({ ok: true });
 }
