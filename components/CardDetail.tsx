@@ -164,7 +164,7 @@ export default function CardDetail({ card: initial }: { card: Card }) {
           </section>
 
           <section className="panel">
-            <CardFields value={fields} onChange={(f) => { setFields(f); setSaved(false); }} />
+            <CardFields value={fields} onChange={(f) => { setFields(f); setSaved(false); }} originalSet={card.set_name} />
           </section>
 
           <div className="row">

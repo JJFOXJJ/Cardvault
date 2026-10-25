@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CATEGORIES, CONDITIONS } from "@/lib/client";
+import { CATEGORIES, CONDITIONS, MANUFACTURERS } from "@/lib/client";
+import ComboSelect, { type ComboOption } from "./ComboSelect";
 
 export type Fields = {
   category: string;
@@ -37,40 +38,93 @@ export function toPayload(f: Fields) {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(f)) out[k] = typeof v === "string" ? v.trim() || null : v;
   out.name = f.name.trim() || "Unnamed card";
+  out.category = f.category.trim() || "Other";
   return out;
 }
 
-export default function CardFields({ value, onChange }: { value: Fields; onChange: (f: Fields) => void }) {
+type Count = { name: string; cards: number };
+type Options = { collections: Count[]; manufacturers: Count[]; categories: Count[] };
+
+// Shared across every form on the page; refreshed on each page load.
+let optionsPromise: Promise<Options> | null = null;
+function loadOptions(): Promise<Options> {
+  optionsPromise ??= fetch("/api/collections")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => ({ collections: d?.collections ?? [], manufacturers: d?.manufacturers ?? [], categories: d?.categories ?? [] }))
+    .catch(() => ({ collections: [], manufacturers: [], categories: [] }));
+  return optionsPromise;
+}
+
+const plural = (n: number) => `${n} card${n === 1 ? "" : "s"}`;
+
+/** Names you've used (with counts) first, then common defaults you haven't used yet. */
+function merged(used: Count[], defaults: string[]): ComboOption[] {
+  const usedNames = new Set(used.map((u) => u.name.toLowerCase()));
+  return [
+    ...[...used].sort((a, b) => b.cards - a.cards || a.name.localeCompare(b.name)).map((u) => ({ value: u.name, label: `${u.name} (${plural(u.cards)})` })),
+    ...defaults.filter((d) => !usedNames.has(d.toLowerCase())).map((d) => ({ value: d })),
+  ];
+}
+
+export default function CardFields({
+  value,
+  onChange,
+  originalSet,
+}: {
+  value: Fields;
+  onChange: (f: Fields) => void;
+  /** The card's current collection, so its own count isn't confusing on the edit screen. */
+  originalSet?: string | null;
+}) {
   const set = <K extends keyof Fields>(k: K) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     onChange({ ...value, [k]: k === "quantity" ? Number(e.target.value) : e.target.value });
+  const setVal = (k: keyof Fields) => (v: string) => onChange({ ...value, [k]: v });
 
-  const categories = CATEGORIES.includes(value.category) ? CATEGORIES : [...CATEGORIES, value.category];
-
-  // Existing collection names, offered as suggestions so new cards reuse the same spelling.
-  const [sets, setSets] = useState<string[]>([]);
+  const [opts, setOpts] = useState<Options | null>(null);
   useEffect(() => {
-    fetch("/api/collections")
-      .then((r) => (r.ok ? r.json() : { collections: [] }))
-      .then((d: { collections?: { name: string }[] }) => setSets((d.collections ?? []).map((c) => c.name)))
-      .catch(() => {});
+    let live = true;
+    loadOptions().then((o) => live && setOpts(o));
+    return () => { live = false; };
   }, []);
+
+  const collections: ComboOption[] = (opts?.collections ?? [])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((c) => ({ value: c.name, label: `${c.name} (${plural(c.cards)})` }));
+  const isNewCollection = !!value.set_name.trim() && !!opts && !collections.some((c) => c.value === value.set_name) && value.set_name !== originalSet;
 
   return (
     <div className="stack">
       <label className="field"><span>Card title</span><input value={value.name} onChange={set("name")} placeholder="e.g. Michael Jordan #57" /></label>
-      <div className="grid-2">
-        <label className="field"><span>Category</span>
-          <select value={value.category} onChange={set("category")}>{categories.map((c) => <option key={c}>{c}</option>)}</select>
-        </label>
-        <label className="field"><span>Player / character</span><input value={value.subject} onChange={set("subject")} /></label>
+
+      <div className="field">
+        <span>Collection / set</span>
+        {opts ? (
+          <ComboSelect
+            value={value.set_name}
+            onChange={setVal("set_name")}
+            options={collections}
+            emptyLabel="Unsorted"
+            newLabel="New collection…"
+            placeholder="e.g. 1992 Marvel Masterpieces"
+            newNote={isNewCollection ? "This will start a new collection." : undefined}
+          />
+        ) : (
+          <input value={value.set_name} onChange={set("set_name")} placeholder="Loading collections…" />
+        )}
       </div>
-      <label className="field"><span>Collection / set</span>
-        <input value={value.set_name} onChange={set("set_name")} placeholder="e.g. 1992 Marvel Masterpieces" list="cv-sets" autoComplete="off" />
-        <datalist id="cv-sets">{sets.map((n) => <option key={n} value={n} />)}</datalist>
-      </label>
+
       <div className="grid-2">
-        <label className="field"><span>Year</span><input value={value.year} onChange={set("year")} /></label>
-        <label className="field"><span>Manufacturer</span><input value={value.manufacturer} onChange={set("manufacturer")} /></label>
+        <div className="field">
+          <span>Category</span>
+          <ComboSelect value={value.category} onChange={setVal("category")} options={merged(opts?.categories ?? [], CATEGORIES)} emptyLabel="—" placeholder="Type a category" />
+        </div>
+        <div className="field">
+          <span>Manufacturer</span>
+          <ComboSelect value={value.manufacturer} onChange={setVal("manufacturer")} options={merged(opts?.manufacturers ?? [], MANUFACTURERS)} placeholder="Type a manufacturer" />
+        </div>
+        <label className="field"><span>Player / character</span><input value={value.subject} onChange={set("subject")} /></label>
+        <label className="field"><span>Year</span><input value={value.year} onChange={set("year")} inputMode="numeric" /></label>
         <label className="field"><span>Card number</span><input value={value.card_number} onChange={set("card_number")} /></label>
         <label className="field"><span>Variant / parallel</span><input value={value.variant} onChange={set("variant")} placeholder="Holo, Refractor, /99…" /></label>
         <label className="field"><span>Condition</span>

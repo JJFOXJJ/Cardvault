@@ -9,19 +9,39 @@ import { similarGroups } from "@/lib/collections";
 
 const UNSORTED = "Unsorted";
 
-type Sort = "set" | "value" | "recent" | "name";
+type Group = "set" | "category" | "manufacturer" | "year" | "none";
+type Sort = "number" | "value" | "recent" | "name";
+
+const GROUP_FIELD: Record<Exclude<Group, "none">, (c: Card) => string | null> = {
+  set: (c) => c.set_name,
+  category: (c) => c.category,
+  manufacturer: (c) => c.manufacturer,
+  year: (c) => c.year,
+};
+const GROUP_EMPTY: Record<Exclude<Group, "none">, string> = { set: "Unsorted", category: "Other", manufacturer: "Unknown maker", year: "Unknown year" };
 
 export default function Collection({ cards }: { cards: Card[] }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("All");
-  const [sort, setSort] = useState<Sort>("set");
+  const [group, setGroupState] = useState<Group>("set");
+  const [sort, setSortState] = useState<Sort>("number");
   const [busy, setBusy] = useState("");
   const [dismissed, setDismissed] = useState<string[]>([]);
   const router = useRouter();
 
   useEffect(() => {
-    try { setDismissed(JSON.parse(localStorage.getItem("cv_merge_dismissed") || "[]")); } catch { /* ignore */ }
+    try {
+      setDismissed(JSON.parse(localStorage.getItem("cv_merge_dismissed") || "[]"));
+      const v = JSON.parse(localStorage.getItem("cv_view") || "{}");
+      if (v.group) setGroupState(v.group);
+      if (v.sort) setSortState(v.sort);
+    } catch { /* ignore */ }
   }, []);
+
+  // Remember the chosen view on this device.
+  const saveView = (g: Group, s: Sort) => { try { localStorage.setItem("cv_view", JSON.stringify({ group: g, sort: s })); } catch { /* ignore */ } };
+  const setGroup = (g: Group) => { setGroupState(g); saveView(g, sort); };
+  const setSort = (s: Sort) => { setSortState(s); saveView(group, s); };
 
   // Collection names with card counts, for merge suggestions.
   const setCounts = useMemo(() => {
@@ -60,10 +80,6 @@ export default function Collection({ cards }: { cards: Card[] }) {
     if (to != null) renameCollection(from, to);
   }
 
-  async function merge(group: string[]) {
-    const [keep, ...rest] = group;
-    for (const from of rest) await renameCollection(from, keep);
-  }
 
   function dismiss(group: string[]) {
     const next = [...dismissed, group.join("|")];
@@ -97,16 +113,17 @@ export default function Collection({ cards }: { cards: Card[] }) {
     else if (sort === "recent") list.sort((a, b) => b.created_at.localeCompare(a.created_at));
     else list.sort((a, b) => (a.card_number ?? "").localeCompare(b.card_number ?? "", undefined, { numeric: true }));
 
-    if (sort !== "set") return [{ name: "", cards: list, value: 0 }];
+    if (group === "none") return [{ name: "", cards: list, value: 0 }];
+    const field = GROUP_FIELD[group];
     const map = new Map<string, Card[]>();
     for (const c of list) {
-      const key = c.set_name?.trim() || UNSORTED;
+      const key = field(c)?.trim() || GROUP_EMPTY[group];
       map.set(key, [...(map.get(key) ?? []), c]);
     }
     return [...map.entries()]
       .map(([name, cs]) => ({ name, cards: cs, value: cs.reduce((n, c) => n + (c.aud_mid ?? 0) * c.quantity, 0) }))
-      .sort((a, b) => b.value - a.value);
-  }, [filtered, sort]);
+      .sort((a, b) => (group === "year" ? b.name.localeCompare(a.name) : b.value - a.value));
+  }, [filtered, sort, group]);
 
   if (!cards.length) {
     return (
@@ -127,30 +144,33 @@ export default function Collection({ cards }: { cards: Card[] }) {
         <div className="stat"><b>{totals.sets}</b><span>Collections</span></div>
       </section>
 
-      {suggestions.map((g) => (
-        <div key={g.join("|")} className="merge-hint">
-          <div>
-            <b>These look like the same collection:</b>
-            <ul>{g.map((n) => <li key={n}>{n} <span className="muted">({setCounts.get(n)} card{setCounts.get(n) === 1 ? "" : "s"})</span></li>)}</ul>
-          </div>
-          <div className="row">
-            <button className="btn primary small" onClick={() => merge(g)} disabled={!!busy}>
-              {busy ? <span className="spinner" /> : <>Merge into &ldquo;{g[0]}&rdquo;</>}
-            </button>
-            <button className="btn small" onClick={() => { const to = window.prompt("Name for the merged collection:", g[0]); if (to?.trim()) (async () => { for (const from of g) await renameCollection(from, to); })(); }} disabled={!!busy}>Pick a name…</button>
-            <button className="btn ghost small" onClick={() => dismiss(g)} disabled={!!busy}>Not the same</button>
-          </div>
+      {suggestions.length > 0 && (
+        <div className="merge-hint row">
+          <span style={{ flex: "1 1 220px" }}>
+            <b>{suggestions.length} possible duplicate collection{suggestions.length === 1 ? "" : "s"}</b>
+            <span className="muted small"> — e.g. {suggestions[0].map((n) => `“${n}”`).join(" and ")}</span>
+          </span>
+          <Link href="/collections" className="btn primary small">Review</Link>
+          <button className="btn ghost small" onClick={() => suggestions.forEach(dismiss)}>Dismiss</button>
         </div>
-      ))}
+      )}
 
       <div className="toolbar">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, player, set, number…" type="search" />
-        <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort">
-          <option value="set">Group by collection</option>
-          <option value="value">Highest value</option>
-          <option value="recent">Recently added</option>
-          <option value="name">A–Z</option>
+        <select value={group} onChange={(e) => setGroup(e.target.value as Group)} aria-label="Group by">
+          <option value="set">Group: Collection</option>
+          <option value="category">Group: Category</option>
+          <option value="manufacturer">Group: Manufacturer</option>
+          <option value="year">Group: Year</option>
+          <option value="none">No grouping</option>
         </select>
+        <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort">
+          <option value="number">Sort: Card number</option>
+          <option value="value">Sort: Highest value</option>
+          <option value="recent">Sort: Recently added</option>
+          <option value="name">Sort: A–Z</option>
+        </select>
+        <Link href="/collections" className="btn small">Collections</Link>
         <a href="/api/export" className="btn small">Export CSV</a>
       </div>
 
@@ -168,9 +188,11 @@ export default function Collection({ cards }: { cards: Card[] }) {
             <div className="set-head">
               <h2>{g.name}</h2>
               <span className="muted small">{g.cards.reduce((n, c) => n + c.quantity, 0)} cards</span>
-              <button className="btn ghost small" onClick={() => askRename(g.name)} disabled={!!busy} title="Rename or merge this collection">
-                {busy === g.name ? <span className="spinner" /> : "Rename"}
-              </button>
+              {group === "set" && (
+                <button className="btn ghost small" onClick={() => askRename(g.name)} disabled={!!busy} title="Rename or merge this collection">
+                  {busy === g.name ? <span className="spinner" /> : "Rename"}
+                </button>
+              )}
               <span className="spacer" />
               <span>{aud(g.value, false)}</span>
             </div>

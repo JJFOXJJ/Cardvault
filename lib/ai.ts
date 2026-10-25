@@ -62,6 +62,7 @@ Reply with a JSON object with exactly these keys:
   "year": string or null,
   "manufacturer": string or null (e.g. "Fleer", "SkyBox", "Panini", "Upper Deck"),
   "set_name": the set / collection, e.g. "1992 Marvel Masterpieces" or "2023-24 Panini Prizm", or null,
+  "existing_collection": if the owner lists existing collections below and this card belongs to one of them, that collection's name copied EXACTLY; otherwise null,
   "card_number": string or null,
   "variant": parallel / insert / holo / serial numbering, or null,
   "graded": e.g. "PSA 9", or null if raw,
@@ -216,7 +217,7 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
       (images.length > 1 ? "The first photo is the front of the card, the second is the back. " : "") +
       "Identify this trading card." +
       (existingSets.length
-        ? `\n\nThe owner's vault already has these collections:\n${existingSets.slice(0, 200).map((n) => `- ${n}`).join("\n")}\nIf this card belongs to one of them, set "set_name" to that EXACT name (same spelling). Only use a new name if it's genuinely a different set.`
+        ? `\n\nThe owner's existing collections:\n${existingSets.slice(0, 200).map((n) => `- ${n}`).join("\n")}\nIf this card is from the same set as one of these (even if it's worded differently), put that exact name in "existing_collection". A different year or series of a product line is a different collection. Use null if none fit.`
         : "") +
       (hint?.trim() ? `\n\nThe owner adds this hint (trust it): ${hint.trim()}` : ""),
   });
@@ -232,7 +233,7 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
     subject: str("subject"),
     year: str("year"),
     manufacturer: str("manufacturer"),
-    set_name: snapToExisting(str("set_name"), existingSets),
+    set_name: pickCollection(str("existing_collection"), str("set_name"), existingSets),
     card_number: str("card_number"),
     variant: str("variant"),
     graded: str("graded"),
@@ -252,6 +253,15 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
     price_query,
     is_pokemon: Boolean(j.is_pokemon) || /pok[eé]mon/i.test(card.category),
   };
+}
+
+/** Prefer the AI's pick from the owner's list (only if it really is on the list), then a close-name match, then its new name. */
+function pickCollection(picked: string | null, suggested: string | null, existing: string[]): string | null {
+  if (picked) {
+    const hit = existing.find((e) => e.trim().toLowerCase() === picked.trim().toLowerCase());
+    if (hit) return hit;
+  }
+  return snapToExisting(suggested, existing);
 }
 
 export function describeCard(c: {

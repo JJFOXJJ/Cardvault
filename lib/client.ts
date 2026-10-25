@@ -37,4 +37,9 @@ export async function api<T = unknown>(url: string, init?: RequestInit): Promise
 }
 
 export const CATEGORIES = ["Marvel", "Basketball", "The Simpsons", "Pokémon", "Other"];
+export const MANUFACTURERS = [
+  "Topps", "Panini", "Upper Deck", "Fleer", "SkyBox", "Hoops", "Donruss", "Score", "Bowman", "Leaf",
+  "Impel", "Marvel", "Collector's Edge", "Pacific", "Futera", "Select Australia", "The Pokémon Company",
+  "Wizards of the Coast", "Konami", "Cardz", "Dynamic", "Comic Images",
+];
 export const CONDITIONS = ["Mint", "Near Mint", "Excellent", "Very Good", "Good", "Fair", "Poor"];
