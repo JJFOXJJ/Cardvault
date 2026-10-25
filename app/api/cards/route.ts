@@ -4,6 +4,26 @@ import { db, pickEditable, storeImage } from "@/lib/supabase";
 
 export const maxDuration = 60;
 
+/** Fetch a few cards by id (for the "Just added" strip). GET /api/cards?ids=a,b,c */
+export async function GET(req: NextRequest) {
+  const denied = await requireAuth();
+  if (denied) return denied;
+  const ids = (req.nextUrl.searchParams.get("ids") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
+    .slice(0, 200);
+  if (!ids.length) return NextResponse.json({ cards: [] });
+  const { data, error } = await db()
+    .from("cards")
+    .select("id, name, set_name, image_url, photo_url, aud_mid, quantity, confidence, status")
+    .in("id", ids);
+  if (error) return jsonError(error.message, 500);
+  // Keep the caller's order (newest first).
+  const byId = new Map((data ?? []).map((c) => [c.id, c]));
+  return NextResponse.json({ cards: ids.map((id) => byId.get(id)).filter(Boolean) });
+}
+
 type Body = Record<string, unknown> & {
   imageUrl?: string;       // chosen online image
   imageSource?: string;

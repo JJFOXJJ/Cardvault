@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
+import { clearAdded } from "@/lib/session-added";
 
 /** Where "back" should go if there's no earlier page in this tab (e.g. opened from a link). */
 function parentOf(path: string, pending: string | null) {
@@ -17,6 +18,8 @@ function BackButton() {
   if (path === "/") return null;
 
   function goBack() {
+    // Leaving the adding screens ends the "Just added" session.
+    if ((path === "/add" && !pending) || path === "/pending") clearAdded();
     const fromThisSite = typeof document !== "undefined" && document.referrer.startsWith(window.location.origin);
     if (fromThisSite && window.history.length > 1) router.back();
     else router.push(parentOf(path, pending));

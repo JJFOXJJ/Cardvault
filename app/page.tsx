@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Header from "@/components/Header";
 import Collection from "@/components/Collection";
+import ClearJustAdded from "@/components/ClearJustAdded";
 import { db, type Card } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,7 @@ export default async function Home() {
   return (
     <>
       <Header />
+      <ClearJustAdded />
       <main className="wrap">
         {!!waiting && (
           <Link href="/pending" className="waiting-banner">

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { api, aud } from "@/lib/client";
+import { pushAdded } from "@/lib/session-added";
+import JustAdded from "./JustAdded";
 
 type Item = { id: string; photo_url: string | null; back_photo_url: string | null; hint: string | null; last_error: string | null; created_at: string };
 type RowState = { state: "idle" | "working" | "done" | "error"; note?: string };
@@ -32,6 +34,7 @@ export default function PendingList({ items }: { items: Item[] }) {
       try {
         const r = await api<{ name: string; confidence: string; aud_mid: number | null }>(`/api/pending/${item.id}/auto`, { method: "POST" });
         setRow(item.id, { state: "done", note: `${r.name} · ${aud(r.aud_mid)}${r.confidence === "low" ? " · check this one" : ""}` });
+        pushAdded(item.id);
         consecutiveFailures = 0;
       } catch (e) {
         setRow(item.id, { state: "error", note: e instanceof Error ? e.message : "Failed" });
@@ -65,10 +68,13 @@ export default function PendingList({ items }: { items: Item[] }) {
 
   if (!items.length) {
     return (
-      <div className="empty">
-        <h1>Nothing waiting</h1>
-        <p className="muted">Cards you save for later will appear here.</p>
-        <Link href="/add" className="btn primary" style={{ marginTop: 10 }}>Add cards</Link>
+      <div className="stack">
+        <div className="empty">
+          <h1>Nothing waiting</h1>
+          <p className="muted">Cards you save for later will appear here.</p>
+          <Link href="/add" className="btn primary" style={{ marginTop: 10 }}>Add cards</Link>
+        </div>
+        <JustAdded title="Just filed" />
       </div>
     );
   }
@@ -107,10 +113,12 @@ export default function PendingList({ items }: { items: Item[] }) {
         {rows.__stop && <p className="error" style={{ margin: 0 }}>{rows.__stop.note}</p>}
       </section>
 
+      <JustAdded title="Just filed" lockLinks={running} />
+
       <p className="small muted" style={{ margin: 0 }}>Or tap a card to identify it yourself and choose the picture.</p>
 
       <div className="pending-grid">
-        {items.map((i) => {
+        {items.filter((i) => rows[i.id]?.state !== "done").map((i) => {
           const r = rows[i.id];
           return (
             <div key={i.id} className="pending-item">

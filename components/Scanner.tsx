@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import CardFields, { fieldsFrom, toPayload, type Fields } from "@/components/CardFields";
 import ImagePicker, { type Candidate } from "@/components/ImagePicker";
 import { api, aud, fileToDataUrl } from "@/lib/client";
+import { pushAdded } from "@/lib/session-added";
+import JustAdded from "@/components/JustAdded";
 
 type Range = { low: number; mid: number; high: number };
 type IdentifyResult = {
@@ -156,18 +158,23 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
     };
 
     try {
-      let id: string;
       if (pending) {
         await api(`/api/cards/${pending.id}`, {
           method: "PATCH",
           body: JSON.stringify({ ...payload, status: "catalogued", last_error: null, hint: hint || null }),
         });
-        id = pending.id;
-      } else {
-        ({ id } = await api<{ id: string }>("/api/cards", { method: "POST", body: JSON.stringify({ ...payload, photo: front }) }));
+        pushAdded(pending.id);
+        router.push("/pending");
+        router.refresh();
+        return;
       }
-      router.push(pending ? "/pending" : `/card/${id}`);
-      router.refresh();
+      const { id } = await api<{ id: string }>("/api/cards", { method: "POST", body: JSON.stringify({ ...payload, photo: front }) });
+      pushAdded(id);
+      const savedName = fields.name.trim() || "Card";
+      reset();
+      setSaving(false);
+      setNotice(`Saved “${savedName}”. Snap the next card — it's in the list below.`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
       setSaving(false);
@@ -232,6 +239,12 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {stage === "capture" && !pending && (
+        <div style={{ marginTop: 22 }}>
+          <JustAdded />
         </div>
       )}
 
