@@ -39,12 +39,11 @@ Without this key the app still works; it uses your photo and Gemini's own knowle
 ### 4. Deploy to Vercel
 1. Push this folder to a new **private** GitHub repo.
 2. In [vercel.com](https://vercel.com) → **Add New → Project** → import the repo (framework is detected automatically).
-3. Under **Environment Variables**, add everything from `.env.example`:
+3. Under **Environment Variables**, add these. (Tip: you can paste several `NAME=value` lines into the first Key box at once.) If you created Supabase from Vercel's **Storage** tab, the two Supabase values are already there:
 
 | Variable | Value |
 |---|---|
 | `APP_PIN` | Your PIN — use 6 or more digits |
-| `SESSION_SECRET` | A long random string (`openssl rand -hex 32`, or mash the keyboard for 40+ characters) |
 | `SUPABASE_URL` | From step 1 |
 | `SUPABASE_SERVICE_ROLE_KEY` | From step 1 |
 | `GEMINI_API_KEY` | From step 2 |

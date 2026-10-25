@@ -7,9 +7,11 @@ export const SESSION_DAYS = 30;
 const enc = new TextEncoder();
 
 async function hmacKey() {
-  const secret = process.env.SESSION_SECRET;
+  // SESSION_SECRET is optional: the Supabase server key (added automatically by the
+  // Vercel ↔ Supabase integration) is already a long, private random string.
+  const secret = process.env.SESSION_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
   const pin = process.env.APP_PIN;
-  if (!secret || !pin) throw new Error("APP_PIN and SESSION_SECRET must be set");
+  if (!secret || !pin) throw new Error("APP_PIN must be set (and Supabase connected)");
   return crypto.subtle.importKey("raw", enc.encode(`${secret}:${pin}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 }
 
