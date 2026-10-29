@@ -16,7 +16,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!card) return jsonError("Card not found", 404);
 
   try {
-    const v = await priceCard(describeCard(card));
+    const v = await priceCard(describeCard(card), undefined, me.id);
     if (v.failed) return jsonError(v.value_notes, 503);
     const update = {
       ...(await valueColumns(v.value_usd)),

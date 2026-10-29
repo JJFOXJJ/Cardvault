@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/client";
+import { UsageMeter } from "./Usage";
 
 type P = { id: string; name: string; is_admin: boolean; created_at: string; cards?: number };
 type Data = { me: { id: string; name: string; is_admin: boolean }; profiles: P[] };
@@ -58,6 +60,9 @@ export default function Profiles() {
           Each profile has its own PIN and its own cards, collections and waiting list. Nobody can see another profile&apos;s cards.
         </p>
       </div>
+
+      <UsageMeter />
+      <Link href="/usage" className="small muted" style={{ marginTop: -6 }}>See usage by profile →</Link>
 
       {notice && <p className="notice">{notice}</p>}
       {error && <p className="error">{error}</p>}

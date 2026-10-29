@@ -242,3 +242,18 @@ footer.credit a { text-decoration: underline; }
 @media (max-width: 520px) { .me-name { display: none; } .me-chip { padding: 3px; } .brand { font-size: 16px; } }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 @media (max-width: 520px) { .grid-3 { grid-template-columns: 1fr; } }
+
+/* Usage meter */
+.usage-meter { display: grid; gap: 6px; padding: 10px 14px; margin-bottom: 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); }
+.usage-meter:hover { border-color: #3a4152; }
+.usage-meter.warn .progress i, .usage-panel.warn .progress i { background: #ff9f43; }
+.usage-meter.full, .usage-panel.full { border-color: rgba(255, 107, 107, 0.45); }
+.usage-meter.full .progress i, .usage-panel.full .progress i { background: var(--bad); }
+.progress.big { height: 10px; }
+.usage-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.usage-stats > div { background: var(--bg-2); border-radius: 10px; padding: 10px 12px; }
+.usage-stats b { display: block; font-family: "Space Grotesk", sans-serif; font-size: 20px; }
+.usage-stats span { color: var(--muted); font-size: 12px; }
+@media (max-width: 520px) { .usage-stats { grid-template-columns: 1fr; } }
+.by-profile { display: grid; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+.by-profile .row { padding-top: 8px; }

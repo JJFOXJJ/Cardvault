@@ -8,6 +8,7 @@ import ImagePicker, { type Candidate } from "@/components/ImagePicker";
 import { api, aud, fileToDataUrl } from "@/lib/client";
 import { pushAdded } from "@/lib/session-added";
 import JustAdded from "@/components/JustAdded";
+import { UsageMeter } from "@/components/Usage";
 
 type Range = { low: number; mid: number; high: number };
 type IdentifyResult = {
@@ -23,6 +24,7 @@ type IdentifyResult = {
   fx: number;
   candidates: Candidate[];
   imageSearchEnabled: boolean;
+  searchCapped?: boolean;
 };
 
 export type PendingCard = { id: string; photo_url: string; back_photo_url: string | null; hint: string | null };
@@ -200,6 +202,8 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
       {notice && <p className="notice">{notice}</p>}
       {error && <p className="error">{error}</p>}
 
+      {stage === "capture" && !pending && <UsageMeter />}
+
       {stage === "capture" && (
         <div className="stack">
           <div className="shots">
@@ -266,6 +270,11 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
               <span className="spacer" />
               <span className={`badge ${result.card.confidence}`}>{result.card.confidence} confidence</span>
             </div>
+            {result.searchCapped && (
+              <p className="small" style={{ margin: 0, color: "var(--accent)" }}>
+                This month&apos;s free searches are used up, so no online picture or sales lookup was done — your photo is used and the value is Gemini&apos;s own estimate. Tap “Update value” on the card after the monthly reset.
+              </p>
+            )}
             {!result.imageSearchEnabled && !candidates.length && (
               <p className="small muted">Image search isn&apos;t set up (BRAVE_SEARCH_API_KEY), so your photo will be used.</p>
             )}

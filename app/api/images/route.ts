@@ -7,5 +7,5 @@ export async function GET(req: NextRequest) {
   if (me instanceof NextResponse) return me;
   const q = req.nextUrl.searchParams.get("q")?.trim();
   if (!q) return jsonError("Missing search");
-  return NextResponse.json({ candidates: await braveImages(q, 12) });
+  return NextResponse.json({ candidates: await braveImages(q, 12, me.id) });
 }

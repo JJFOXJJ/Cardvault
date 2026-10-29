@@ -7,6 +7,7 @@
 
 import { braveWeb, type WebResult } from "./images";
 import { snapToExisting } from "./collections";
+import { recordUsage } from "./usage";
 
 // Free-tier models to try in order. Each has its own free allowance, so if one is busy
 // or has no quota for this key, the next one usually works.
@@ -88,7 +89,7 @@ Reply with a JSON object:
 
 type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
-async function gemini(parts: Part[], system: string, budgetMs = 50000): Promise<Record<string, unknown>> {
+async function gemini(parts: Part[], system: string, budgetMs = 50000, profileId?: string): Promise<Record<string, unknown>> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY is not set in Vercel");
 
@@ -150,6 +151,7 @@ async function gemini(parts: Part[], system: string, budgetMs = 50000): Promise<
         break;
       }
 
+      await recordUsage("gemini", profileId);
       type GeminiResponse = { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] };
       const data = (await res.json()) as GeminiResponse;
       const text = data.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "";
@@ -186,9 +188,9 @@ function cleanSources(v: unknown, allowed: WebResult[]): { title: string; url: s
 }
 
 /** Estimate value from Brave search results about the card. */
-export async function priceCard(description: string, query?: string): Promise<Valuation> {
+export async function priceCard(description: string, query?: string, profileId?: string): Promise<Valuation> {
   const q = query || `${description.split("\n").slice(0, 6).map((l) => l.replace(/^[^:]+:\s*/, "")).join(" ")} sold price`;
-  const results = await braveWeb(q).catch(() => [] as WebResult[]);
+  const results = await braveWeb(q, profileId).catch(() => [] as WebResult[]);
 
   const snippets = results.length
     ? results
@@ -198,7 +200,7 @@ export async function priceCard(description: string, query?: string): Promise<Va
 
   let j: Record<string, unknown>;
   try {
-    j = await gemini([{ text: `CARD\n${description}\n\nSEARCH RESULTS\n${snippets}` }], PRICE_PROMPT, 40000);
+    j = await gemini([{ text: `CARD\n${description}\n\nSEARCH RESULTS\n${snippets}` }], PRICE_PROMPT, 40000, profileId);
   } catch (e) {
     // Don't lose a good identification just because pricing timed out.
     return { failed: true, value_usd: null, value_notes: `Couldn't estimate a value this time (${e instanceof Error ? e.message : "error"}). Tap "Update value" later.`, price_sources: [] };
@@ -210,7 +212,7 @@ export async function priceCard(description: string, query?: string): Promise<Va
   };
 }
 
-export async function identifyCard(images: { mediaType: string; data: string }[], hint?: string, existingSets: string[] = []): Promise<Identification> {
+export async function identifyCard(images: { mediaType: string; data: string }[], hint?: string, existingSets: string[] = [], profileId?: string): Promise<Identification> {
   const parts: Part[] = images.map((img) => ({ inline_data: { mime_type: img.mediaType, data: img.data } }));
   parts.push({
     text:
@@ -222,7 +224,7 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
       (hint?.trim() ? `\n\nThe owner adds this hint (trust it): ${hint.trim()}` : ""),
   });
 
-  const j = await gemini(parts, IDENTIFY_PROMPT, 55000);
+  const j = await gemini(parts, IDENTIFY_PROMPT, 55000, profileId);
   const str = (k: string) => (typeof j[k] === "string" && (j[k] as string).trim() ? (j[k] as string).trim() : null);
 
   const card = {
@@ -242,7 +244,7 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
     .filter(Boolean).join(" ");
 
   const price_query = str("price_query") ?? `${fallbackQuery} sold price`;
-  const valuation = await priceCard(describeCard(card), price_query);
+  const valuation = await priceCard(describeCard(card), price_query, profileId);
 
   return {
     ...card,

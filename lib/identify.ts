@@ -2,6 +2,7 @@ import { identifyCard, type Identification } from "./ai";
 import { braveImages, pokemonImages, type ImageCandidate } from "./images";
 import { round, usdToAud } from "./fx";
 import { cardsOf } from "./supabase";
+import { braveAllowed } from "./usage";
 
 export type IdentifyResult = {
   card: Identification;
@@ -9,11 +10,13 @@ export type IdentifyResult = {
   fx: number;
   candidates: ImageCandidate[];
   imageSearchEnabled: boolean;
+  searchCapped: boolean;
 };
 
 /** Identify a card from photos, estimate its value and find clean pictures of it. */
 export async function runIdentify(profileId: string, images: { mediaType: string; data: string }[], hint?: string | null): Promise<IdentifyResult> {
-  const card = await identifyCard(images, hint ?? undefined, await existingSetNames(profileId));
+  const searchCapped = !!process.env.BRAVE_SEARCH_API_KEY && !(await braveAllowed());
+  const card = await identifyCard(images, hint ?? undefined, await existingSetNames(profileId), profileId);
 
   let candidates: ImageCandidate[] = [];
   let value = card.value_usd;
@@ -28,7 +31,7 @@ export async function runIdentify(profileId: string, images: { mediaType: string
     }
   }
   if (candidates.length < 4) {
-    candidates = [...candidates, ...(await braveImages(card.image_query, 8 - candidates.length).catch(() => []))];
+    candidates = [...candidates, ...(await braveImages(card.image_query, 8 - candidates.length, profileId).catch(() => []))];
   }
 
   const fx = await usdToAud();
@@ -38,6 +41,7 @@ export async function runIdentify(profileId: string, images: { mediaType: string
     fx,
     candidates,
     imageSearchEnabled: Boolean(process.env.BRAVE_SEARCH_API_KEY),
+    searchCapped,
   };
 }
 

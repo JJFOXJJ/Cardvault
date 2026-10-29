@@ -1,3 +1,5 @@
+import { braveAllowed, recordUsage } from "./usage";
+
 export type ImageCandidate = {
   url: string;      // full-size image to store
   thumb: string;    // safe-to-display preview
@@ -9,14 +11,16 @@ export type ImageCandidate = {
 export type WebResult = { title: string; url: string; description: string; extra?: string[]; age?: string };
 
 /** Web results (with extra snippets) used to price a card. */
-export async function braveWeb(query: string): Promise<WebResult[]> {
+export async function braveWeb(query: string, profileId?: string): Promise<WebResult[]> {
   const key = process.env.BRAVE_SEARCH_API_KEY;
   if (!key || !query.trim()) return [];
+  if (!(await braveAllowed())) return []; // monthly free credit used up — don't risk charges
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10&extra_snippets=true&safesearch=strict`;
   const res = await fetch(url, {
     headers: { Accept: "application/json", "X-Subscription-Token": key },
     signal: AbortSignal.timeout(10000),
   });
+  if (res.status !== 401 && res.status !== 403) await recordUsage("brave", profileId);
   if (!res.ok) {
     console.error("Brave web search failed", res.status, await res.text().catch(() => ""));
     return [];
@@ -36,14 +40,16 @@ export async function braveWeb(query: string): Promise<WebResult[]> {
 }
 
 /** Clean card images from Brave's image search. */
-export async function braveImages(query: string, count = 8): Promise<ImageCandidate[]> {
+export async function braveImages(query: string, count = 8, profileId?: string): Promise<ImageCandidate[]> {
   const key = process.env.BRAVE_SEARCH_API_KEY;
   if (!key || !query.trim()) return [];
+  if (!(await braveAllowed())) return [];
   const url = `https://api.search.brave.com/res/v1/images/search?q=${encodeURIComponent(query)}&count=20&safesearch=strict`;
   const res = await fetch(url, {
     headers: { Accept: "application/json", "X-Subscription-Token": key },
     signal: AbortSignal.timeout(10000),
   });
+  if (res.status !== 401 && res.status !== 403) await recordUsage("brave", profileId);
   if (!res.ok) {
     console.error("Brave image search failed", res.status, await res.text().catch(() => ""));
     return [];

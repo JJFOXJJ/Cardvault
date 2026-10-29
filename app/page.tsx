@@ -2,6 +2,7 @@ import Link from "next/link";
 import Header from "@/components/Header";
 import Collection from "@/components/Collection";
 import ClearJustAdded from "@/components/ClearJustAdded";
+import { UsageMeter } from "@/components/Usage";
 import { cardsOf, type Card } from "@/lib/supabase";
 import { currentProfile } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -32,6 +33,7 @@ export default async function Home() {
             <span className="go">Review →</span>
           </Link>
         )}
+        <UsageMeter />
         {needsMigration ? (
           <p className="error">
             The database needs a quick update for the new &ldquo;save for later&rdquo; feature. In Supabase, open SQL Editor and run the

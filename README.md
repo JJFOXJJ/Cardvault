@@ -75,6 +75,13 @@ Each person gets a profile with their own PIN, cards, collections and waiting li
 - Everyone shares the same Gemini and Brave free allowance.
 - `APP_PIN` is only used for that first setup.
 
+## Usage meter (shared free allowance)
+Run `supabase/migrations/004_usage.sql` once. The app then counts every Brave search and Gemini request, per profile.
+- Home, Add card and Profiles show **~scans left this month** with a reset countdown; tap it for the breakdown by profile.
+- **Safety stop:** at 1,000 Brave searches in a calendar month (UTC) the app stops calling Brave until the next month, so the free $5 credit can't be exceeded. Scans keep working using your photo and Gemini's own value estimate.
+- Set `BRAVE_MONTHLY_LIMIT` in Vercel to change the cap (e.g. `900` for a safety margin).
+- Gemini's free limits are daily (reset at midnight US Pacific) and never charge; the page shows today's count and the countdown.
+
 ## How the PIN lock works
 - Every page and API route requires a signed, HTTP-only session cookie (30 days) tied to a profile. Without it you're sent to the sign-in screen.
 - PINs are stored as salted scrypt hashes, never in plain text.
