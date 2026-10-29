@@ -73,7 +73,7 @@ export default function Header() {
         </Link>
         <nav>
           <WhoAmI />
-          <Link href="/add" className="btn primary small">+ Add card</Link>
+          <Link href="/add" className="btn primary small">+ Add<span className="wide-only"> card</span></Link>
           <button className="btn ghost small" onClick={logout} title="Lock">Lock</button>
         </nav>
       </div>

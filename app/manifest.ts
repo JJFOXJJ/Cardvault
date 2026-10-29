@@ -6,8 +6,8 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "Cards",
     start_url: "/",
     display: "standalone",
-    background_color: "#0f1115",
-    theme_color: "#0f1115",
+    background_color: "#140c2e",
+    theme_color: "#140c2e",
     icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml" }],
   };
 }

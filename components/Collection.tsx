@@ -138,10 +138,12 @@ export default function Collection({ cards }: { cards: Card[] }) {
 
   return (
     <>
-      <section className="hero">
-        <div className="stat gold"><b>{aud(totals.value, false)}</b><span>Estimated value</span></div>
-        <div className="stat"><b>{totals.count}</b><span>Cards</span></div>
-        <div className="stat"><b>{totals.sets}</b><span>Collections</span></div>
+      <section className="worth" aria-label="Collection value">
+        <div className="v">{aud(totals.value, false)}</div>
+        <p>
+          Estimated value of <b>{totals.count} card{totals.count === 1 ? "" : "s"}</b> across{" "}
+          <b>{totals.sets} collection{totals.sets === 1 ? "" : "s"}</b>{cat !== "All" || q.trim() ? " shown" : ""}.
+        </p>
       </section>
 
       {suggestions.length > 0 && (
@@ -158,17 +160,17 @@ export default function Collection({ cards }: { cards: Card[] }) {
       <div className="toolbar">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, player, set, number…" type="search" />
         <select value={group} onChange={(e) => setGroup(e.target.value as Group)} aria-label="Group by">
-          <option value="set">Group: Collection</option>
-          <option value="category">Group: Category</option>
-          <option value="manufacturer">Group: Manufacturer</option>
-          <option value="year">Group: Year</option>
+          <option value="set">By collection</option>
+          <option value="category">By category</option>
+          <option value="manufacturer">By maker</option>
+          <option value="year">By year</option>
           <option value="none">No grouping</option>
         </select>
         <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort">
-          <option value="number">Sort: Card number</option>
-          <option value="value">Sort: Highest value</option>
-          <option value="recent">Sort: Recently added</option>
-          <option value="name">Sort: A–Z</option>
+          <option value="number">Card number</option>
+          <option value="value">Highest value</option>
+          <option value="recent">Newest first</option>
+          <option value="name">A–Z</option>
         </select>
         <Link href="/collections" className="btn small">Collections</Link>
         <a href="/api/export" className="btn small">Export CSV</a>
@@ -187,7 +189,7 @@ export default function Collection({ cards }: { cards: Card[] }) {
           {g.name && (
             <div className="set-head">
               <h2>{g.name}</h2>
-              <span className="muted small">{g.cards.reduce((n, c) => n + c.quantity, 0)} cards</span>
+              <span className="muted small set-count">{(() => { const n = g.cards.reduce((t, c) => t + c.quantity, 0); return `${n} card${n === 1 ? "" : "s"}`; })()}</span>
               {group === "set" && (
                 <button className="btn ghost small" onClick={() => askRename(g.name)} disabled={!!busy} title="Rename or merge this collection">
                   {busy === g.name ? <span className="spinner" /> : "Rename"}
