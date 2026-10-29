@@ -1,23 +1,24 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireAuth, jsonError } from "@/lib/auth";
+import { requireProfile, jsonError } from "@/lib/auth";
 import { runIdentify } from "@/lib/identify";
-import { db, photosAsBase64, storeImage } from "@/lib/supabase";
+import { photosAsBase64, storeImage, cardsOf } from "@/lib/supabase";
 import { round } from "@/lib/fx";
 
 export const maxDuration = 150;
 
 /** Identify a waiting card and file it automatically, using the top picture found. */
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const me = await requireProfile();
+  if (me instanceof NextResponse) return me;
+  const mine = cardsOf(me.id);
   const { id } = await params;
 
-  const { data: row } = await db().from("cards").select("*").eq("id", id).single();
+  const { data: row } = await mine.select("*").eq("id", id).single();
   if (!row) return jsonError("Card not found", 404);
   if (row.status !== "pending") return NextResponse.json({ ok: true, skipped: true });
 
   try {
-    const r = await runIdentify(await photosAsBase64([row.photo_url, row.back_photo_url]), row.hint);
+    const r = await runIdentify(me.id, await photosAsBase64([row.photo_url, row.back_photo_url]), row.hint);
 
     // Store the first picture that downloads cleanly; otherwise keep the owner's photo.
     let image_url: string = row.photo_url;
@@ -59,12 +60,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       last_error: null,
       updated_at: new Date().toISOString(),
     };
-    const { error } = await db().from("cards").update(update).eq("id", id);
+    const { error } = await mine.update(update).eq("id", id);
     if (error) throw new Error(error.message);
     return NextResponse.json({ ok: true, name: c.name, confidence: c.confidence, aud_mid: update.aud_mid });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Identification failed";
-    await db().from("cards").update({ last_error: message.slice(0, 300) }).eq("id", id);
+    await mine.update({ last_error: message.slice(0, 300) }).eq("id", id);
     return jsonError(message, 502);
   }
 }

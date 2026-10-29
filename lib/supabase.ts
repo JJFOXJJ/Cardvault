@@ -47,6 +47,7 @@ export type Card = {
   back_photo_url: string | null;
   hint: string | null;
   last_error: string | null;
+  profile_id: string;
 };
 
 /** Fields the client is allowed to set when creating or editing a card. */
@@ -118,4 +119,24 @@ export async function photosAsBase64(urls: (string | null)[]) {
     out.push({ mediaType: type.startsWith("image/") ? type : "image/jpeg", data: Buffer.from(await res.arrayBuffer()).toString("base64") });
   }
   return out;
+}
+
+/**
+ * The ONLY way the app touches the cards table: every query is locked to one profile,
+ * and inserts are stamped with it. Using db().from("cards") directly anywhere else is a bug.
+ */
+export function cardsOf(profileId: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(profileId)) throw new Error("Invalid profile");
+  const t = () => db().from("cards");
+  return {
+    // Typed as "*" so rows come back loosely typed; the real column list is still sent.
+    select: (columns: string = "*", options?: { count?: "exact"; head?: boolean }) =>
+      t().select(columns as "*", options).eq("profile_id", profileId),
+    insert: (row: Record<string, unknown>) => t().insert({ ...row, profile_id: profileId }),
+    update: (values: Record<string, unknown>) => {
+      const { profile_id: _ignored, ...safe } = values;
+      return t().update(safe).eq("profile_id", profileId);
+    },
+    delete: () => t().delete().eq("profile_id", profileId),
+  };
 }

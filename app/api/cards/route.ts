@@ -1,21 +1,21 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireAuth, jsonError } from "@/lib/auth";
-import { db, pickEditable, storeImage } from "@/lib/supabase";
+import { requireProfile, jsonError } from "@/lib/auth";
+import { pickEditable, storeImage, cardsOf } from "@/lib/supabase";
 
 export const maxDuration = 60;
 
 /** Fetch a few cards by id (for the "Just added" strip). GET /api/cards?ids=a,b,c */
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const me = await requireProfile();
+  if (me instanceof NextResponse) return me;
+  const mine = cardsOf(me.id);
   const ids = (req.nextUrl.searchParams.get("ids") ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
     .slice(0, 200);
   if (!ids.length) return NextResponse.json({ cards: [] });
-  const { data, error } = await db()
-    .from("cards")
+  const { data, error } = await mine
     .select("id, name, set_name, image_url, photo_url, aud_mid, quantity, confidence, status")
     .in("id", ids);
   if (error) return jsonError(error.message, 500);
@@ -32,8 +32,9 @@ type Body = Record<string, unknown> & {
 };
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const me = await requireProfile();
+  if (me instanceof NextResponse) return me;
+  const mine = cardsOf(me.id);
 
   const body = (await req.json().catch(() => null)) as Body | null;
   if (!body || typeof body.name !== "string" || !body.name.trim()) return jsonError("The card needs a name");
@@ -50,8 +51,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const { data, error } = await db()
-      .from("cards")
+    const { data, error } = await mine
       .insert({
         ...pickEditable(body),
         image_url: image_url ?? photo_url,

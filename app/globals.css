@@ -230,3 +230,15 @@ footer.credit a { text-decoration: underline; }
 .just-added { border-color: rgba(87, 201, 138, 0.35); }
 .just-added .cards { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
 @media (max-width: 420px) { .just-added .cards { grid-template-columns: repeat(3, 1fr); gap: 10px; } }
+
+/* Profiles */
+.profile-pick { display: grid; gap: 10px; margin-top: 8px; }
+.profile-btn { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; text-align: left; }
+.profile-btn:hover { border-color: var(--accent); }
+.avatar { width: 36px; height: 36px; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 800; color: var(--accent-ink); background: linear-gradient(135deg, var(--accent), #e0752d); }
+.avatar.small { width: 26px; height: 26px; font-size: 13px; }
+.me-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 3px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; font-weight: 600; }
+.me-chip:hover { background: var(--panel); }
+@media (max-width: 520px) { .me-name { display: none; } .me-chip { padding: 3px; } .brand { font-size: 16px; } }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+@media (max-width: 520px) { .grid-3 { grid-template-columns: 1fr; } }

@@ -45,7 +45,7 @@ Without this key the app still works; it uses your photo and Gemini's own knowle
 
 | Variable | Value |
 |---|---|
-| `APP_PIN` | Your PIN — use 6 or more digits |
+| `APP_PIN` | Your first PIN (used to create the first profile) — use 6 or more digits |
 | `SUPABASE_URL` | From step 1 |
 | `SUPABASE_SERVICE_ROLE_KEY` | From step 1 |
 | `GEMINI_API_KEY` | From step 2 |
@@ -66,10 +66,20 @@ npm run dev                  # http://localhost:3000
 ## Updating an existing database
 If you set up Supabase before the waiting list was added, run `supabase/migrations/002_waiting_list.sql` once in the SQL Editor. (New setups get it from `schema.sql`.)
 
+## Profiles (several people, separate collections)
+Each person gets a profile with their own PIN, cards, collections and waiting list. Nobody can see another profile's cards — every database query is locked to the signed-in profile on the server.
+
+- **First time after upgrading:** run `supabase/migrations/003_profiles.sql` in the Supabase SQL Editor. The sign-in screen then asks for your name and your current `APP_PIN`; that creates your (admin) profile and moves all existing cards into it.
+- **Adding someone:** tap your name (top right) → **Profiles** → **Add a profile**, with a starting PIN. They pick their name on the sign-in screen and can change their PIN on the same page.
+- Admins can reset PINs, make others admin, and delete a profile (with all its cards). Admins see card counts only, never the cards.
+- Everyone shares the same Gemini and Brave free allowance.
+- `APP_PIN` is only used for that first setup.
+
 ## How the PIN lock works
-- Every page and API route requires a signed, HTTP-only session cookie (30 days). Without it you're sent to the PIN pad.
-- 5 wrong PINs from one IP locks that IP out for 15 minutes.
-- **Changing `APP_PIN` in Vercel (then redeploying) signs out every device.**
+- Every page and API route requires a signed, HTTP-only session cookie (30 days) tied to a profile. Without it you're sent to the sign-in screen.
+- PINs are stored as salted scrypt hashes, never in plain text.
+- 5 wrong PINs for a profile from one device locks that profile on that device for 15 minutes.
+- Changing or resetting a profile's PIN signs that profile out on every other device.
 - Card images are in a public bucket with random file names, so an image link works if shared, but nobody can list or browse your collection.
 
 ## Costs

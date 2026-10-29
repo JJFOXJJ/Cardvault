@@ -1,7 +1,7 @@
 import { identifyCard, type Identification } from "./ai";
 import { braveImages, pokemonImages, type ImageCandidate } from "./images";
 import { round, usdToAud } from "./fx";
-import { db } from "./supabase";
+import { cardsOf } from "./supabase";
 
 export type IdentifyResult = {
   card: Identification;
@@ -12,8 +12,8 @@ export type IdentifyResult = {
 };
 
 /** Identify a card from photos, estimate its value and find clean pictures of it. */
-export async function runIdentify(images: { mediaType: string; data: string }[], hint?: string | null): Promise<IdentifyResult> {
-  const card = await identifyCard(images, hint ?? undefined, await existingSetNames());
+export async function runIdentify(profileId: string, images: { mediaType: string; data: string }[], hint?: string | null): Promise<IdentifyResult> {
+  const card = await identifyCard(images, hint ?? undefined, await existingSetNames(profileId));
 
   let candidates: ImageCandidate[] = [];
   let value = card.value_usd;
@@ -42,7 +42,7 @@ export async function runIdentify(images: { mediaType: string; data: string }[],
 }
 
 /** Distinct collection names already in the vault (catalogued cards only). */
-export async function existingSetNames(): Promise<string[]> {
-  const { data } = await db().from("cards").select("set_name").neq("status", "pending").not("set_name", "is", null);
+export async function existingSetNames(profileId: string): Promise<string[]> {
+  const { data } = await cardsOf(profileId).select("set_name").neq("status", "pending").not("set_name", "is", null);
   return [...new Set((data ?? []).map((r) => (r.set_name as string).trim()).filter(Boolean))].sort();
 }

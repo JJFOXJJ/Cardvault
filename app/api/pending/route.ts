@@ -1,13 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireAuth, jsonError } from "@/lib/auth";
-import { db, storeImage } from "@/lib/supabase";
+import { requireProfile, jsonError } from "@/lib/auth";
+import { storeImage, cardsOf } from "@/lib/supabase";
 
 export const maxDuration = 60;
 
 /** Save photos now, identify later. One card per request. */
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const me = await requireProfile();
+  if (me instanceof NextResponse) return me;
+  const mine = cardsOf(me.id);
 
   const body = (await req.json().catch(() => null)) as { front?: string; back?: string; hint?: string } | null;
   if (!body?.front?.startsWith("data:image/")) return jsonError("Add a photo of the card first");
@@ -16,8 +17,7 @@ export async function POST(req: NextRequest) {
     const photo_url = await storeImage(body.front, "photos");
     const back_photo_url = body.back?.startsWith("data:image/") ? await storeImage(body.back, "photos") : null;
 
-    const { data, error } = await db()
-      .from("cards")
+    const { data, error } = await mine
       .insert({
         status: "pending",
         name: "Waiting to identify",
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       throw new Error(error.message);
     }
 
-    const { count } = await db().from("cards").select("id", { count: "exact", head: true }).eq("status", "pending");
+    const { count } = await mine.select("id", { count: "exact", head: true }).eq("status", "pending");
     return NextResponse.json({ id: data.id, waiting: count ?? null });
   } catch (e) {
     console.error(e);

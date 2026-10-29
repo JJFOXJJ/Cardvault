@@ -1,13 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireAuth, jsonError } from "@/lib/auth";
+import { requireProfile, jsonError } from "@/lib/auth";
 import { runIdentify } from "@/lib/identify";
-import { db, photosAsBase64 } from "@/lib/supabase";
+import { photosAsBase64, cardsOf } from "@/lib/supabase";
 
 export const maxDuration = 120;
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const me = await requireProfile();
+  if (me instanceof NextResponse) return me;
+  const mine = cardsOf(me.id);
 
   const body = (await req.json().catch(() => null)) as { images?: string[]; hint?: string; pendingId?: string } | null;
 
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
 
     if (body?.pendingId) {
       // A card saved earlier: use its stored photos.
-      const { data: row } = await db().from("cards").select("photo_url, back_photo_url, hint").eq("id", body.pendingId).single();
+      const { data: row } = await mine.select("photo_url, back_photo_url, hint").eq("id", body.pendingId).single();
       if (!row?.photo_url) return jsonError("That saved card has no photo", 404);
       images = await photosAsBase64([row.photo_url, row.back_photo_url]);
       hint = hint?.trim() ? hint : row.hint ?? undefined;
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
     }
     if (!images.length) return jsonError("Add a photo of the card first");
 
-    return NextResponse.json(await runIdentify(images, hint));
+    return NextResponse.json(await runIdentify(me.id, images, hint));
   } catch (e) {
     console.error(e);
     return jsonError(e instanceof Error ? e.message : "Lookup failed", 502);

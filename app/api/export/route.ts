@@ -1,5 +1,6 @@
-import { requireAuth } from "@/lib/auth";
-import { db, type Card } from "@/lib/supabase";
+import { NextResponse } from "next/server";
+import { requireProfile } from "@/lib/auth";
+import { type Card, cardsOf } from "@/lib/supabase";
 
 const COLUMNS: (keyof Card)[] = [
   "category", "set_name", "name", "subject", "year", "manufacturer", "card_number", "variant",
@@ -12,9 +13,10 @@ const cell = (v: unknown) => {
 };
 
 export async function GET() {
-  const denied = await requireAuth();
-  if (denied) return denied;
-  const { data } = await db().from("cards").select("*").neq("status", "pending").order("set_name").order("name");
+  const me = await requireProfile();
+  if (me instanceof NextResponse) return me;
+  const mine = cardsOf(me.id);
+  const { data } = await mine.select("*").neq("status", "pending").order("set_name").order("name");
   const rows = (data ?? []) as Card[];
   const csv = [
     [...COLUMNS, "total_aud_mid"].join(","),

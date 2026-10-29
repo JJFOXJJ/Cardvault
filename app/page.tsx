@@ -2,14 +2,19 @@ import Link from "next/link";
 import Header from "@/components/Header";
 import Collection from "@/components/Collection";
 import ClearJustAdded from "@/components/ClearJustAdded";
-import { db, type Card } from "@/lib/supabase";
+import { cardsOf, type Card } from "@/lib/supabase";
+import { currentProfile } from "@/lib/auth";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
+  const me = await currentProfile();
+  if (!me) redirect("/login");
+  const mine = cardsOf(me.id);
   const [{ data, error }, { count: waiting }] = await Promise.all([
-    db().from("cards").select("*").neq("status", "pending").order("created_at", { ascending: false }),
-    db().from("cards").select("id", { count: "exact", head: true }).eq("status", "pending"),
+    mine.select("*").neq("status", "pending").order("created_at", { ascending: false }),
+    mine.select("id", { count: "exact", head: true }).eq("status", "pending"),
   ]);
 
   const needsMigration = error && /status/i.test(error.message);

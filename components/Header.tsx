@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { clearAdded } from "@/lib/session-added";
 
 /** Where "back" should go if there's no earlier page in this tab (e.g. opened from a link). */
@@ -32,9 +32,34 @@ function BackButton() {
   );
 }
 
+function WhoAmI() {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    let cached: string | null = null;
+    try { cached = sessionStorage.getItem("cv_me"); } catch { /* ignore */ }
+    if (cached) { setName(cached); return; }
+    fetch("/api/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { name?: string } | null) => {
+        if (!d?.name) return;
+        setName(d.name);
+        try { sessionStorage.setItem("cv_me", d.name); } catch { /* ignore */ }
+      })
+      .catch(() => {});
+  }, []);
+  if (!name) return null;
+  return (
+    <Link href="/profiles" className="me-chip" title="Profiles & PIN">
+      <span className="avatar small">{name.slice(0, 1).toUpperCase()}</span>
+      <span className="me-name">{name}</span>
+    </Link>
+  );
+}
+
 export default function Header() {
   async function logout() {
     await fetch("/api/login", { method: "DELETE" });
+    try { sessionStorage.clear(); } catch { /* ignore */ }
     window.location.href = "/login";
   }
   return (
@@ -47,6 +72,7 @@ export default function Header() {
           <span className="brand-mark" aria-hidden /> Card Vault
         </Link>
         <nav>
+          <WhoAmI />
           <Link href="/add" className="btn primary small">+ Add card</Link>
           <button className="btn ghost small" onClick={logout} title="Lock">Lock</button>
         </nav>

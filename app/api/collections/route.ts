@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireAuth, jsonError } from "@/lib/auth";
-import { db } from "@/lib/supabase";
+import { requireProfile, jsonError } from "@/lib/auth";
+import { cardsOf } from "@/lib/supabase";
 
 type Count = { name: string; cards: number; value: number };
 
@@ -20,9 +20,10 @@ function tally(rows: Record<string, unknown>[], field: string): Count[] {
 
 /** Names already used in the vault, with card counts — for dropdowns and the manage page. */
 export async function GET() {
-  const denied = await requireAuth();
-  if (denied) return denied;
-  const { data, error } = await db().from("cards").select("set_name, manufacturer, category, quantity, aud_mid").neq("status", "pending");
+  const me = await requireProfile();
+  if (me instanceof NextResponse) return me;
+  const mine = cardsOf(me.id);
+  const { data, error } = await mine.select("set_name, manufacturer, category, quantity, aud_mid").neq("status", "pending");
   if (error) return jsonError(error.message, 500);
   const rows = data ?? [];
   return NextResponse.json({
@@ -39,8 +40,9 @@ export async function GET() {
  * Renaming to a name that already exists merges them.
  */
 export async function PATCH(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const me = await requireProfile();
+  if (me instanceof NextResponse) return me;
+  const mine = cardsOf(me.id);
   const body = (await req.json().catch(() => null)) as { from?: string | null | (string | null)[]; to?: string } | null;
   const to = body?.to?.trim();
   if (!body || !to) return jsonError("Give the collection a name");
@@ -50,7 +52,7 @@ export async function PATCH(req: NextRequest) {
   let updated = 0;
   for (const from of froms) {
     if (from === to) continue;
-    let q = db().from("cards").update({ set_name: to, updated_at: new Date().toISOString() }).neq("status", "pending");
+    let q = mine.update({ set_name: to, updated_at: new Date().toISOString() }).neq("status", "pending");
     q = from == null || from === "" ? q.is("set_name", null) : q.eq("set_name", from);
     const { data, error } = await q.select("id");
     if (error) return jsonError(error.message, 500);
