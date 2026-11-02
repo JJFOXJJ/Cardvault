@@ -2,9 +2,10 @@
 // estimate values with ONE price lookup per set, and tick cards on/off.
 
 import { askGemini } from "./ai";
-import { braveWeb, type WebResult } from "./images";
+import { braveImages, braveWeb, type WebResult } from "./images";
 import { round, usdToAud } from "./fx";
-import { cardsOf, removeStoredImage, setCardsOf, setsOf } from "./supabase";
+import { cardsOf, removeStoredImage, setCardsOf, setsOf, storeImage } from "./supabase";
+import { braveAllowed } from "./usage";
 
 export type ChecklistEntry = { number: string | null; name: string; subset: string | null; image_url?: string | null; est_aud?: number | null };
 export type SetRow = { id: string; name: string; tracking: boolean; source: string | null; source_url: string | null; total: number; priced_at: string | null };
@@ -293,10 +294,9 @@ export async function setOwned(profileId: string, set: SetRow, entryIds: string[
   if (scanned.length && !force) return { changed: 0, needsConfirm: scanned.map((c) => c.name as string) };
   for (const c of toRemove) {
     await cardsOf(profileId).delete().eq("id", c.id);
-    if (c.photo_url) {
-      await removeStoredImage(c.photo_url);
-      if (c.image_url && c.image_url !== c.photo_url) await removeStoredImage(c.image_url);
-    }
+    // Remove pictures we stored (photos, auto-found pictures). Outside links (e.g. Pokémon) are left alone.
+    if (c.photo_url) await removeStoredImage(c.photo_url);
+    if (c.image_url && c.image_url !== c.photo_url) await removeStoredImage(c.image_url);
   }
   return { changed: toRemove.length };
 }
@@ -305,4 +305,41 @@ export async function getSet(profileId: string, id: string): Promise<SetRow | nu
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const { data } = await setsOf(profileId).select("id, name, tracking, source, source_url, total, priced_at").eq("id", id).maybeSingle();
   return (data as SetRow) ?? null;
+}
+
+/**
+ * Find a picture for owned cards in this set that don't have one (1 image search per card).
+ * Works through at most `max` cards per call so each request stays short; call again for the rest.
+ */
+export async function findPictures(profileId: string, set: SetRow, entryIds?: string[], max = 4) {
+  const { data: entries } = await setCardsOf(profileId).select("id, number, name").eq("set_id", set.id);
+  const entry = new Map((entries ?? []).map((e) => [e.id, e]));
+  const wanted = entryIds?.length ? entryIds.filter((id) => entry.has(id)) : [...entry.keys()];
+  if (!wanted.length) return { done: 0, remaining: 0, capped: false, tried: [] as string[] };
+
+  const { data: owned } = await cardsOf(profileId).select("id, checklist_id, image_url, photo_url").in("checklist_id", wanted.slice(0, 500));
+  const todo = (owned ?? []).filter((c) => !c.image_url && !c.photo_url);
+  let done = 0, capped = false;
+  const tried: string[] = [];
+
+  for (const c of todo.slice(0, max)) {
+    if (!(await braveAllowed())) { capped = true; break; }
+    tried.push(c.checklist_id);
+    const e = entry.get(c.checklist_id)!;
+    const query = `${set.name} ${e.number ? `#${e.number} ` : ""}${e.name} card`;
+    const found = await braveImages(query, 4, profileId).catch(() => []);
+    for (const cand of found) {
+      let url: string | null = null;
+      for (const src of [cand.url, cand.thumb]) {
+        try { url = await storeImage(src, "official"); break; } catch { /* try the next source */ }
+      }
+      if (url) {
+        await cardsOf(profileId).update({ image_url: url, image_source: cand.source ?? null }).eq("id", c.id);
+        done++;
+        break;
+      }
+    }
+  }
+  const processed = Math.min(todo.length, max);
+  return { done, remaining: capped ? todo.length : Math.max(0, todo.length - processed), capped, tried };
 }

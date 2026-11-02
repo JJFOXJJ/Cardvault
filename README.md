@@ -81,6 +81,7 @@ Run `supabase/migrations/005_sets.sql` once.
 - Tracking finds the set's checklist: Pokémon from the official database (with pictures and prices); everything else from a checklist web page read by Gemini (1 Brave search). If it can't find one — or gets it wrong — paste your own on the set page (one card per line, e.g. `1 Captain America`).
 - Set page: **Grid**, **List** or **Binder** view (remembered per device), All/Owned/Missing filter, completion ring, value owned and rough cost to complete. Tap a missing card to tick it; **Tick off cards** mode lets you tap or drag across many.
 - Ticked cards are real cards in your collection and count toward your total.
+- **Pictures for ticked cards:** with *Find pictures when I tick* on (the default, remembered per device), each ticked card gets a picture in the background — 1 image search per card. *Find pictures for N cards* catches up on ticked cards that have none. Your own photos are never replaced; Pokémon cards already come with official pictures. Stops automatically at the monthly search limit.
 - **Values:** one price lookup per set gives every card a rough estimate (1 search). It only fills in cards that have no value — anything you scanned or re-valued keeps its value. Open any card and tap **Update value** for its own price.
 - Unticking a card you scanned with a photo asks first. *Stop tracking* removes the checklist only; your cards stay.
 

@@ -33,11 +33,50 @@ export default function SetView({ set, entries }: { set: SetRow; entries: Entry[
   const [busy, setBusy] = useState("");
   const [paste, setPaste] = useState("");
   const [showOptions, setShowOptions] = useState(false);
+  const [autoPics, setAutoPics] = useState(true);
+  const [picStatus, setPicStatus] = useState("");
+  const picQueue = useRef<Set<string>>(new Set());
+  const picRunning = useRef(false);
 
   useEffect(() => {
     try { const v = localStorage.getItem("cv_set_view") as View | null; if (v === "grid" || v === "list" || v === "binder") setView(v); } catch { /* ignore */ }
   }, []);
+  useEffect(() => {
+    try { if (localStorage.getItem(`cv_autopics_${set.id}`) === "off") setAutoPics(false); } catch { /* ignore */ }
+  }, [set.id]);
+  const chooseAutoPics = (on: boolean) => { setAutoPics(on); try { localStorage.setItem(`cv_autopics_${set.id}`, on ? "on" : "off"); } catch { /* ignore */ } };
   useEffect(() => { setPending(new Map()); }, [entries]);
+
+  /** Fetch pictures for ticked cards in small batches, in the background. */
+  const runPictures = useCallback(async (ids: string[]) => {
+    ids.forEach((id) => picQueue.current.add(id));
+    if (picRunning.current) return;
+    picRunning.current = true;
+    let found = 0;
+    try {
+      while (picQueue.current.size) {
+        const batch = [...picQueue.current].slice(0, 4);
+        setPicStatus(`Finding pictures… ${picQueue.current.size} to go`);
+        const r = await api<{ done: number; capped: boolean }>(`/api/sets/${set.id}/pictures`, { method: "POST", body: JSON.stringify({ ids: batch }) });
+        found += r.done;
+        batch.forEach((id) => picQueue.current.delete(id));
+        router.refresh();
+        if (r.capped) {
+          picQueue.current.clear();
+          setError("This month's free searches are used up, so the remaining pictures will have to wait for the reset.");
+          break;
+        }
+      }
+      if (found) setToast(`Added ${found} picture${found === 1 ? "" : "s"}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't find pictures");
+      picQueue.current.clear();
+    } finally {
+      picRunning.current = false;
+      setPicStatus("");
+    }
+  }, [router, set.id]);
+
   const chooseView = (v: View) => { setView(v); try { localStorage.setItem("cv_set_view", v); } catch { /* ignore */ } };
 
   const isOwned = useCallback((e: Entry) => (pending.has(e.id) ? pending.get(e.id)! : !!e.card), [pending]);
@@ -51,6 +90,7 @@ export default function SetView({ set, entries }: { set: SetRow; entries: Entry[
     return { owned, value, toGo, total: entries.length };
   }, [entries, isOwned]);
 
+  const noPicture = entries.filter((e) => e.card && !e.card.image && !e.image).map((e) => e.id);
   const shown = entries.filter((e) => (filter === "owned" ? isOwned(e) : filter === "missing" ? !isOwned(e) : true));
 
   // ---- saving ticks (batched, so fast taps and drags become one request)
@@ -70,6 +110,10 @@ export default function SetView({ set, entries }: { set: SetRow; entries: Entry[
       if (byState.on.length) {
         await api(`/api/sets/${set.id}/toggle`, { method: "POST", body: JSON.stringify({ ids: byState.on, owned: true }) });
         setToast(`+${byState.on.length} ticked`);
+        if (autoPics) {
+          const needPics = byState.on.filter((id) => !entries.find((x) => x.id === id)?.image); // Pokémon already have one
+          if (needPics.length) runPictures(needPics);
+        }
       }
       if (byState.off.length) {
         const res = await fetch(`/api/sets/${set.id}/toggle`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: byState.off, owned: false }) });
@@ -86,7 +130,7 @@ export default function SetView({ set, entries }: { set: SetRow; entries: Entry[
       setError(e instanceof Error ? e.message : "Couldn't save that change");
       setPending(new Map());
     }
-  }, [entries, router, set.id]);
+  }, [entries, router, set.id, autoPics, runPictures]);
 
   const change = useCallback((id: string, own: boolean) => {
     setPending((p) => new Map(p).set(id, own));
@@ -256,6 +300,21 @@ export default function SetView({ set, entries }: { set: SetRow; entries: Entry[
           )}
         </div>
       )}
+
+      <div className="pic-bar">
+        <label className="switch">
+          <input type="checkbox" checked={autoPics} onChange={(e) => chooseAutoPics(e.target.checked)} />
+          <span className="track" aria-hidden />
+          <span className="small">Find pictures when I tick <span className="muted">(1 search each)</span></span>
+        </label>
+        {picStatus ? (
+          <span className="small" style={{ color: "var(--cyan)" }}><span className="spinner" style={{ width: 12, height: 12, display: "inline-block", verticalAlign: -1, marginRight: 6 }} />{picStatus}</span>
+        ) : noPicture.length > 0 ? (
+          <button className="btn small" onClick={() => runPictures(noPicture)}>
+            Find pictures for {noPicture.length} card{noPicture.length === 1 ? "" : "s"}
+          </button>
+        ) : null}
+      </div>
 
       {!shown.length && <p className="muted">Nothing here with this filter.</p>}
 

@@ -2,7 +2,11 @@ import { db } from "./supabase";
 
 // Brave's free credit is $5/month at $5 per 1,000 requests → 1,000 requests.
 // Override with BRAVE_MONTHLY_LIMIT in Vercel if your plan differs.
-export const braveLimit = () => Math.max(0, Number(process.env.BRAVE_MONTHLY_LIMIT) || 1000);
+export const braveLimit = () => {
+  const raw = process.env.BRAVE_MONTHLY_LIMIT?.trim();
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 1000; // 0 is allowed: never search
+};
 export const SEARCHES_PER_SCAN = 2; // one web search for prices + one image search
 
 export type Service = "brave" | "gemini";
