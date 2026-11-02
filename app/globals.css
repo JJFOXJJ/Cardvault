@@ -474,3 +474,16 @@ a.set-row:hover { border-color: var(--lilac); }
 .switch input:checked + .track { background: var(--cyan); border-color: var(--cyan); }
 .switch input:checked + .track::after { transform: translateX(16px); background: var(--accent-ink); }
 .switch input:focus-visible + .track { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+/* Loading screen (shown instantly on navigation) */
+.loading-screen main { padding-top: 22px; }
+.skel { border-radius: 10px; background: linear-gradient(100deg, var(--panel) 30%, var(--panel-2) 50%, var(--panel) 70%); background-size: 300% 100%; animation: skel 1.2s ease-in-out infinite; }
+.skel-title { height: 34px; width: 60%; margin-bottom: 12px; }
+.skel-line { height: 14px; width: 40%; margin-bottom: 22px; }
+.skel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+@media (max-width: 520px) { .skel-grid { grid-template-columns: repeat(3, 1fr); } }
+.skel-card { aspect-ratio: 5 / 7; }
+@keyframes skel { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+/* Tap feedback */
+a:active .art, a:active.set-row, .btn:active { opacity: 0.85; }

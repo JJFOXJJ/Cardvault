@@ -54,6 +54,9 @@ Without this key the app still works; it uses your photo and Gemini's own knowle
 4. **Deploy**. Open the URL, enter your PIN, and tap **+ Add card**.
 5. On your phone: Share → **Add to Home Screen** for an app-like icon.
 
+### Speed: keep the server next to the database
+`vercel.json` runs the app's server in Sydney (`syd1`), next to a Sydney Supabase project. If your Supabase project is in another region, change `regions` in `vercel.json` to the nearest Vercel region — every screen makes several database calls, so distance matters.
+
 ### Run locally (optional)
 ```bash
 cp .env.example .env.local   # fill in values

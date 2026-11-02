@@ -26,6 +26,27 @@ export default function Profiles() {
   const [addName, setAddName] = useState("");
   const [addPin, setAddPin] = useState("");
 
+  const [shrinkMsg, setShrinkMsg] = useState("");
+  const [shrinking, setShrinking] = useState(false);
+  async function shrinkAll() {
+    setShrinking(true); setError("");
+    let total = 0, saved = 0;
+    try {
+      for (let i = 0; i < 200; i++) {
+        const r = await api<{ done: number; remaining: number; savedMB: number }>("/api/maintenance/shrink", { method: "POST" });
+        total += r.done; saved += r.savedMB;
+        setShrinkMsg(r.remaining ? `Shrinking pictures… ${r.remaining} cards to go` : "");
+        if (!r.remaining || !r.done) break;
+      }
+      setShrinkMsg(total ? `Done — ${total} card${total === 1 ? "" : "s"} updated, ${saved.toFixed(1)} MB smaller.` : "All your pictures are already optimised.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't shrink pictures");
+      setShrinkMsg("");
+    } finally {
+      setShrinking(false);
+    }
+  }
+
   async function load() {
     const d = await api<Data>("/api/profiles");
     setData(d);
@@ -96,6 +117,19 @@ export default function Profiles() {
             <button className="btn small" disabled={!!busy || !curPin || !pinOk(newPin) || !newPin2}>{busy === "pin" ? <span className="spinner" /> : "Change PIN"}</button>
           </div>
         </form>
+      </section>
+
+      <section className="panel stack">
+        <h2 style={{ fontSize: 18 }}>Speed up my pictures</h2>
+        <p className="small muted" style={{ margin: 0 }}>
+          Pictures saved before the speed update are full size, which makes screens slow on a phone. This makes your copies smaller (they look the same on screen). It only needs doing once — new pictures are already small.
+        </p>
+        <div className="row">
+          <button className="btn small" onClick={shrinkAll} disabled={shrinking}>
+            {shrinking ? <><span className="spinner" /> Working…</> : "Speed up my pictures"}
+          </button>
+          {shrinkMsg && <span className="small" style={{ color: "var(--cyan)" }}>{shrinkMsg}</span>}
+        </div>
       </section>
 
       {me.is_admin && (

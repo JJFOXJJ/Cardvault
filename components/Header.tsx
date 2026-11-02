@@ -4,25 +4,33 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { clearAdded } from "@/lib/session-added";
+import { popPrevious, recordVisit } from "@/lib/nav-history";
 
 /** Where "back" should go if there's no earlier page in this tab (e.g. opened from a link). */
 function parentOf(path: string, pending: string | null) {
   if (path.startsWith("/add") && pending) return "/pending";
+  if (path.startsWith("/sets/")) return "/sets";
   return "/";
 }
 
 function BackButton() {
   const router = useRouter();
   const path = usePathname();
-  const pending = useSearchParams().get("pending");
+  const params = useSearchParams();
+  const pending = params.get("pending");
+  const url = params.toString() ? `${path}?${params}` : path;
+
+  // Remember every screen visited in this tab.
+  useEffect(() => { recordVisit(url); }, [url]);
+
   if (path === "/") return null;
 
   function goBack() {
     // Leaving the adding screens ends the "Just added" session.
     if ((path === "/add" && !pending) || path === "/pending") clearAdded();
-    const fromThisSite = typeof document !== "undefined" && document.referrer.startsWith(window.location.origin);
-    if (fromThisSite && window.history.length > 1) router.back();
-    else router.push(parentOf(path, pending));
+    const prev = popPrevious();
+    if (prev) router.back(); // previous screen, with its scroll position
+    else router.push(parentOf(path, pending)); // opened directly: go to the sensible parent
   }
 
   return (

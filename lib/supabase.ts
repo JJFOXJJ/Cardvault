@@ -67,6 +67,25 @@ export function pickEditable(input: Record<string, unknown>) {
   return out;
 }
 
+/**
+ * Make a picture small enough for fast loading on phones: fit within `maxSide` px, WebP, EXIF-rotated.
+ * If anything goes wrong the original is kept.
+ */
+export async function shrink(bytes: ArrayBuffer, type: string, maxSide: number): Promise<{ bytes: ArrayBuffer; type: string }> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const out = await sharp(Buffer.from(bytes), { failOn: "none" })
+      .rotate()
+      .resize({ width: maxSide, height: maxSide, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toBuffer();
+    if (out.byteLength >= bytes.byteLength && type !== "image/webp") return { bytes, type }; // no gain
+    return { bytes: Uint8Array.from(out).buffer, type: "image/webp" };
+  } catch {
+    return { bytes, type };
+  }
+}
+
 /** Download a remote image or decode a data URL, then store it in the bucket. Returns the public URL. */
 export async function storeImage(src: string, folder: "official" | "photos"): Promise<string> {
   let bytes: ArrayBuffer;
@@ -92,6 +111,7 @@ export async function storeImage(src: string, folder: "official" | "photos"): Pr
   }
 
   if (bytes.byteLength > 10 * 1024 * 1024) throw new Error("Image is larger than 10 MB");
+  ({ bytes, type } = await shrink(bytes, type, folder === "photos" ? 1200 : 800));
   const ext = ({ "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/avif": "avif" } as Record<string, string>)[type] ?? "jpg";
   const path = `${folder}/${crypto.randomUUID()}.${ext}`;
 
