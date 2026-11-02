@@ -8,7 +8,7 @@ import { api, aud } from "@/lib/client";
 import CardFields, { fieldsFrom, toPayload, type Fields } from "./CardFields";
 import ImagePicker, { type Candidate } from "./ImagePicker";
 
-export default function CardDetail({ card: initial }: { card: Card }) {
+export default function CardDetail({ card: initial, inSet }: { card: Card; inSet?: { id: string; name: string; number: string | null } | null }) {
   const router = useRouter();
   const [card, setCard] = useState(initial);
   const [fields, setFields] = useState<Fields>(fieldsFrom(initial as unknown as Record<string, unknown>));
@@ -126,6 +126,11 @@ export default function CardDetail({ card: initial }: { card: Card }) {
         <div className="stack">
           <div>
             <p className="muted small" style={{ margin: 0 }}>{card.category}{card.set_name ? ` · ${card.set_name}` : ""}</p>
+            {inSet && (
+              <Link href={`/sets/${inSet.id}`} className="set-link">
+                In your {inSet.name} checklist{inSet.number ? ` · #${inSet.number}` : ""}
+              </Link>
+            )}
             <h1>{card.name}</h1>
           </div>
 

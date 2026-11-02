@@ -75,6 +75,15 @@ Each person gets a profile with their own PIN, cards, collections and waiting li
 - Everyone shares the same Gemini and Brave free allowance.
 - `APP_PIN` is only used for that first setup.
 
+## Sets & checklists (tick off cards like a binder)
+Run `supabase/migrations/005_sets.sql` once.
+- After you scan the first card from a new set, the app asks: **track the whole set** or **just this card**. Collections you didn't track are listed on the **Sets** tab with a *Track set* button.
+- Tracking finds the set's checklist: Pokémon from the official database (with pictures and prices); everything else from a checklist web page read by Gemini (1 Brave search). If it can't find one — or gets it wrong — paste your own on the set page (one card per line, e.g. `1 Captain America`).
+- Set page: **Grid**, **List** or **Binder** view (remembered per device), All/Owned/Missing filter, completion ring, value owned and rough cost to complete. Tap a missing card to tick it; **Tick off cards** mode lets you tap or drag across many.
+- Ticked cards are real cards in your collection and count toward your total.
+- **Values:** one price lookup per set gives every card a rough estimate (1 search). It only fills in cards that have no value — anything you scanned or re-valued keeps its value. Open any card and tap **Update value** for its own price.
+- Unticking a card you scanned with a photo asks first. *Stop tracking* removes the checklist only; your cards stay.
+
 ## Usage meter (shared free allowance)
 Run `supabase/migrations/004_usage.sql` once. The app then counts every Brave search and Gemini request, per profile.
 - Home, Add card and Profiles show **~scans left this month** with a reset countdown; tap it for the breakdown by profile.

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireProfile, jsonError } from "@/lib/auth";
-import { cardsOf } from "@/lib/supabase";
+import { cardsOf, setsOf } from "@/lib/supabase";
 
 type Count = { name: string; cards: number; value: number };
 
@@ -57,6 +57,11 @@ export async function PATCH(req: NextRequest) {
     const { data, error } = await q.select("id");
     if (error) return jsonError(error.message, 500);
     updated += data?.length ?? 0;
+    // Keep a tracked set's name in step with its collection (unless a set already uses the new name).
+    if (from) {
+      const { data: clash } = await setsOf(me.id).select("id").ilike("name", to.replace(/[%_]/g, "\\$&"));
+      if (!clash?.length) await setsOf(me.id).update({ name: to }).ilike("name", from.replace(/[%_]/g, "\\$&"));
+    }
   }
   return NextResponse.json({ ok: true, updated });
 }

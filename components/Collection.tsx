@@ -206,7 +206,9 @@ export default function Collection({ cards }: { cards: Card[] }) {
                   {c.image_url ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img src={c.image_url} alt={c.name} loading="lazy" />
-                  ) : null}
+                  ) : (
+                    <span className="ck-plain">{c.subject || c.name}{c.card_number ? <small>#{c.card_number}</small> : null}</span>
+                  )}
                   {c.quantity > 1 && <span className="qty">×{c.quantity}</span>}
                   {c.image_url && c.image_url === c.photo_url && <span className="own">your photo</span>}
                 </div>

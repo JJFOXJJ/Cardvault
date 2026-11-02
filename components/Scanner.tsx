@@ -9,6 +9,7 @@ import { api, aud, fileToDataUrl } from "@/lib/client";
 import { pushAdded } from "@/lib/session-added";
 import JustAdded from "@/components/JustAdded";
 import { UsageMeter } from "@/components/Usage";
+import NewSetPrompt from "@/components/NewSetPrompt";
 
 type Range = { low: number; mid: number; high: number };
 type IdentifyResult = {
@@ -57,6 +58,16 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
   const [saving, setSaving] = useState(false);
   const [queueing, setQueueing] = useState("");
   const [waiting, setWaiting] = useState(initialWaiting);
+  const [newSet, setNewSet] = useState<{ name: string; image: string | null } | null>(null);
+
+  /** After saving, offer to track the whole set if this is the first card from it. */
+  async function maybeAskAboutSet(name: string, image: string | null) {
+    if (!name) return;
+    try {
+      const r = await api<{ available: boolean; set: unknown }>(`/api/sets?name=${encodeURIComponent(name)}`);
+      if (r.available && !r.set) setNewSet({ name, image });
+    } catch { /* tracking not set up yet — skip quietly */ }
+  }
   const manyRef = useRef<HTMLInputElement>(null);
 
   const pick = (setter: (s: string) => void) => async (f: File) => {
@@ -173,10 +184,13 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
       const { id } = await api<{ id: string }>("/api/cards", { method: "POST", body: JSON.stringify({ ...payload, photo: front }) });
       pushAdded(id);
       const savedName = fields.name.trim() || "Card";
+      const savedSet = fields.set_name.trim();
+      const savedImage = selected && selected !== "own" ? selected.thumb : front;
       reset();
       setSaving(false);
       setNotice(`Saved “${savedName}”. Snap the next card — it's in the list below.`);
       window.scrollTo({ top: 0, behavior: "smooth" });
+      maybeAskAboutSet(savedSet, savedImage);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
       setSaving(false);
@@ -344,6 +358,7 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
           </div>
         </div>
       )}
+      {newSet && <NewSetPrompt name={newSet.name} image={newSet.image} onClose={() => setNewSet(null)} />}
     </main>
   );
 }

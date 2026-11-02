@@ -3,6 +3,7 @@ import Header from "@/components/Header";
 import Collection from "@/components/Collection";
 import ClearJustAdded from "@/components/ClearJustAdded";
 import { UsageMeter } from "@/components/Usage";
+import ViewSwitch from "@/components/ViewSwitch";
 import { cardsOf, type Card } from "@/lib/supabase";
 import { currentProfile } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -25,6 +26,7 @@ export default async function Home() {
       <Header />
       <ClearJustAdded />
       <main className="wrap">
+        <ViewSwitch active="cards" />
         {!!waiting && (
           <Link href="/pending" className="waiting-banner">
             <span>📥</span>

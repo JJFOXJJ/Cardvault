@@ -87,9 +87,10 @@ Reply with a JSON object:
   "value_notes": one or two sentences on what the estimate is based on,
   "price_sources": [{ "title": string, "url": string }] }`;
 
-type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
+export type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
-async function gemini(parts: Part[], system: string, budgetMs = 50000, profileId?: string): Promise<Record<string, unknown>> {
+/** Ask Gemini for a JSON object (with model fallback, retries and usage counting). */
+export async function askGemini(parts: Part[], system: string, budgetMs = 50000, profileId?: string): Promise<Record<string, unknown>> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY is not set in Vercel");
 
@@ -200,7 +201,7 @@ export async function priceCard(description: string, query?: string, profileId?:
 
   let j: Record<string, unknown>;
   try {
-    j = await gemini([{ text: `CARD\n${description}\n\nSEARCH RESULTS\n${snippets}` }], PRICE_PROMPT, 40000, profileId);
+    j = await askGemini([{ text: `CARD\n${description}\n\nSEARCH RESULTS\n${snippets}` }], PRICE_PROMPT, 40000, profileId);
   } catch (e) {
     // Don't lose a good identification just because pricing timed out.
     return { failed: true, value_usd: null, value_notes: `Couldn't estimate a value this time (${e instanceof Error ? e.message : "error"}). Tap "Update value" later.`, price_sources: [] };
@@ -224,7 +225,7 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
       (hint?.trim() ? `\n\nThe owner adds this hint (trust it): ${hint.trim()}` : ""),
   });
 
-  const j = await gemini(parts, IDENTIFY_PROMPT, 55000, profileId);
+  const j = await askGemini(parts, IDENTIFY_PROMPT, 55000, profileId);
   const str = (k: string) => (typeof j[k] === "string" && (j[k] as string).trim() ? (j[k] as string).trim() : null);
 
   const card = {

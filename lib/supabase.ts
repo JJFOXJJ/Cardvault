@@ -48,6 +48,7 @@ export type Card = {
   hint: string | null;
   last_error: string | null;
   profile_id: string;
+  checklist_id: string | null;
 };
 
 /** Fields the client is allowed to set when creating or editing a card. */
@@ -125,14 +126,19 @@ export async function photosAsBase64(urls: (string | null)[]) {
  * The ONLY way the app touches the cards table: every query is locked to one profile,
  * and inserts are stamped with it. Using db().from("cards") directly anywhere else is a bug.
  */
-export function cardsOf(profileId: string) {
+/**
+ * The ONLY way the app touches per-profile tables: every query is locked to one profile,
+ * and inserts are stamped with it. Using db().from(...) directly for these tables is a bug.
+ */
+function scoped(table: "cards" | "sets" | "set_cards", profileId: string) {
   if (!/^[0-9a-f-]{36}$/i.test(profileId)) throw new Error("Invalid profile");
-  const t = () => db().from("cards");
+  const t = () => db().from(table);
   return {
     // Typed as "*" so rows come back loosely typed; the real column list is still sent.
     select: (columns: string = "*", options?: { count?: "exact"; head?: boolean }) =>
       t().select(columns as "*", options).eq("profile_id", profileId),
-    insert: (row: Record<string, unknown>) => t().insert({ ...row, profile_id: profileId }),
+    insert: (row: Record<string, unknown> | Record<string, unknown>[]) =>
+      t().insert(Array.isArray(row) ? row.map((r) => ({ ...r, profile_id: profileId })) : { ...row, profile_id: profileId }),
     update: (values: Record<string, unknown>) => {
       const { profile_id: _ignored, ...safe } = values;
       return t().update(safe).eq("profile_id", profileId);
@@ -140,3 +146,7 @@ export function cardsOf(profileId: string) {
     delete: () => t().delete().eq("profile_id", profileId),
   };
 }
+
+export const cardsOf = (profileId: string) => scoped("cards", profileId);
+export const setsOf = (profileId: string) => scoped("sets", profileId);
+export const setCardsOf = (profileId: string) => scoped("set_cards", profileId);
