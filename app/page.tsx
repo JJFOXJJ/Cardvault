@@ -5,6 +5,7 @@ import ClearJustAdded from "@/components/ClearJustAdded";
 import { UsageMeter } from "@/components/Usage";
 import ViewSwitch from "@/components/ViewSwitch";
 import { cardsOf, type Card } from "@/lib/supabase";
+import { allRows } from "@/lib/paging";
 import { currentProfile } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
@@ -15,7 +16,8 @@ export default async function Home() {
   if (!me) redirect("/login");
   const mine = cardsOf(me.id);
   const [{ data, error }, { count: waiting }] = await Promise.all([
-    mine.select("*").neq("status", "pending").order("created_at", { ascending: false }),
+    // Every card, not just the first 1,000.
+    allRows<Card>((from, to) => cardsOf(me.id).select("*").neq("status", "pending").order("created_at", { ascending: false }).order("id").range(from, to)),
     mine.select("id", { count: "exact", head: true }).eq("status", "pending"),
   ]);
 

@@ -93,6 +93,7 @@ export default function CardDetail({ card: initial, inSet }: { card: Card; inSet
           <div className="hero-art">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             {card.image_url && <img src={card.image_url} alt={card.name} />}
+            {card.quantity > 1 && <span className="qty big" title={`You have ${card.quantity}`}>×{card.quantity}</span>}
           </div>
           <div className="row">
             <button className="btn small" onClick={() => setChangingImage((v) => !v)} disabled={!!busy}>

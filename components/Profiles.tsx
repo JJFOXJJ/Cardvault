@@ -88,6 +88,7 @@ export default function Profiles() {
 
       <UsageMeter />
       <Link href="/usage" className="small muted" style={{ marginTop: -6 }}>See usage by profile →</Link>
+      {me.is_admin && <Link href="/admin" className="btn small" style={{ justifySelf: "start" }}>Admin overview →</Link>}
 
       {notice && <p className="notice">{notice}</p>}
       {error && <p className="error">{error}</p>}

@@ -1,10 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/session";
 
-// Everything except the PIN screen requires a valid session cookie.
+// Everything except the PIN screen (and the daily job) requires a valid session cookie.
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (pathname === "/login" || pathname === "/api/login") return NextResponse.next();
+  // Daily keep-awake + backup, called by Vercel's scheduler (returns no data; see the route).
+  if (pathname === "/api/cron/daily") return NextResponse.next();
 
   if (await verifySessionToken(req.cookies.get(SESSION_COOKIE)?.value)) return NextResponse.next();
 
