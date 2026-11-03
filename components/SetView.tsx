@@ -389,8 +389,11 @@ export default function SetView({ set, entries, unlinked = 0 }: { set: SetRow; e
                 {busy === "price" ? <span className="spinner" /> : "Re-check set values"}
               </button>
               <button className="btn small" disabled={!!busy} onClick={() => { if (confirm("Search for this set's checklist again? Your ticked cards stay ticked.")) action("build", async () => {
-                  const r = await api<{ total: number; incomplete?: boolean; owned?: number }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ force: true }) });
-                  if (r.incomplete) throw new Error(`Found ${r.total} cards, but that still doesn't cover the ${r.owned} you own — the pages found online only list part of this set. Paste the checklist below instead (copy it from a checklist site, one card per line).`);
+                  const r = await api<{ total: number; incomplete?: boolean; owned?: number; tried?: { site: string; cards: number; note: string }[] }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ force: true }) });
+                  if (r.incomplete) {
+                    const t = (r.tried ?? []).map((x) => `${x.site} (${x.cards ? `${x.cards} cards, ` : ""}${x.note})`).join(", ");
+                    throw new Error(`Found ${r.total} cards, but that doesn't cover the cards you own, so it may still be incomplete.${t ? ` Pages tried: ${t}.` : ""}`);
+                  }
                 }, "Checklist refreshed"); }}>
                 {busy === "build" ? <span className="spinner" /> : "Find checklist again"}
               </button>

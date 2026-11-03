@@ -8,7 +8,7 @@ export type ImageCandidate = {
   origin: "pokemontcg" | "brave" | "web" | "shared";
 };
 
-export type WebResult = { title: string; url: string; description: string; extra?: string[]; age?: string };
+export type WebResult = { title: string; url: string; description: string; extra?: string[]; age?: string; raw?: string };
 
 /** Web results (with extra snippets) used to price a card. */
 export async function braveWeb(query: string, profileId?: string): Promise<WebResult[]> {

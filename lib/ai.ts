@@ -100,6 +100,7 @@ export async function askGemini(parts: Part[], system: string, budgetMs = 50000,
 
   let lastError = "";
   const tried: string[] = [];
+  let maxTokens = opts.maxTokens; // dropped if a model says it's too high
   const deadline = Date.now() + budgetMs;
   for (let n = 0; n < MODELS.length; n++) {
     const idx = (preferred + n) % MODELS.length;
@@ -118,7 +119,7 @@ export async function askGemini(parts: Part[], system: string, budgetMs = 50000,
           body: JSON.stringify({
             system_instruction: { parts: [{ text: system }] },
             contents: [{ role: "user", parts }],
-            generationConfig: { response_mime_type: "application/json", temperature: 0.2, ...(opts.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}) },
+            generationConfig: { response_mime_type: "application/json", temperature: 0.2, ...(maxTokens ? { maxOutputTokens: maxTokens } : {}) },
           }),
           // One slow model shouldn't use up the whole budget.
           signal: AbortSignal.timeout(Math.min(35000, remaining)),
@@ -139,6 +140,7 @@ export async function askGemini(parts: Part[], system: string, budgetMs = 50000,
         tried.push(`${model} (${res.status === 503 ? "overloaded" : res.status === 429 ? "rate limit" : res.status === 404 ? "not available" : res.status})`);
         console.error("Gemini error", lastError);
 
+        if (res.status === 400 && maxTokens && /max.?output|output.?tokens/i.test(msg)) { maxTokens = undefined; attempt--; continue; }
         if (res.status === 400 || res.status === 401 || res.status === 403) {
           if (/api key/i.test(msg)) throw new Error("Gemini rejected the API key — check GEMINI_API_KEY in Vercel");
           if (/location|region|country/i.test(msg)) throw new Error(`Gemini isn't available for this account: ${msg}`);

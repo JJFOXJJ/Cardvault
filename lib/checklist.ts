@@ -5,7 +5,7 @@ import { askGemini } from "./ai";
 import type { WebResult } from "./images";
 import { round, usdToAud } from "./fx";
 import { cardsOf, removeStoredImage, setCardsOf, setsOf } from "./supabase";
-import { imageSearch, searchAllowed, webSearch } from "./search";
+import { checklistSearch, imageSearch, searchAllowed, webSearch } from "./search";
 import {
   countSaved, keepPicture, pictureKey, saveSharedSet, saveSharedSetPrices,
   sharedPictures, sharedSet, sharedSetPrices,
@@ -144,29 +144,106 @@ function parseRows(raw: unknown[]): ChecklistEntry[] {
 }
 
 /**
- * Everything else: find checklist pages (1 search), read them, and have Gemini list the cards.
- * Tries up to 4 pages and keeps the first one that covers the cards you own; otherwise the most complete one.
+ * Read a numbered list straight from page text ("4 Larry Johnson", "| 4 | Larry Johnson | Hornets |").
+ * No AI, so long lists are never cut short. Only trusted when it finds a real run of numbers.
  */
-async function webChecklist(setName: string, profileId: string): Promise<{ list: ChecklistEntry[]; url: string; complete: boolean } | null> {
-  const { results } = await webSearch(`${setName} trading cards complete checklist`, profileId);
+export function rowsFromText(text: string): ChecklistEntry[] {
+  const out: ChecklistEntry[] = [];
+  const seen = new Set<string>();
+  for (const raw of text.split(/\r?\n/)) {
+    let line = raw.trim();
+    if (!line || line.length > 160) continue;
+    let num: string | undefined, name: string | undefined;
+    if (line.includes("|")) {
+      const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
+      const i = cells.findIndex((c) => /^#?[A-Z]{0,4}-?\d{1,4}[a-z]?$/.test(c));
+      if (i !== -1 && cells[i + 1] && /[A-Za-z]/.test(cells[i + 1])) { num = cells[i].replace(/^#/, ""); name = cells[i + 1]; }
+    } else {
+      line = line.replace(/\s+/g, " ");
+      const m = line.match(/^#?\s*([A-Z]{0,4}-?\d{1,4}[a-z]?)\s*[.):\-–—]?\s+([A-Za-z"'][^\t]{1,90})$/);
+      if (m) { num = m[1]; name = m[2]; }
+    }
+    if (!num || !name) continue;
+    if (/^(19|20)\d{2}$/.test(num)) continue; // a year, not a card number
+    const k = normNum(num);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ number: num, name: name.replace(/\s+(RC|SP|\(RC\))$/i, "").trim().slice(0, 120), subset: null });
+  }
+  // Must look like a real checklist: plenty of rows, mostly plain numbers.
+  const plain = out.filter((e) => /^\d+$/.test(e.number ?? "")).length;
+  return out.length >= 20 && plain / out.length >= 0.6 ? out : [];
+}
+
+/** Ask Gemini to list the cards; long pages are read in parts so nothing is cut off. */
+async function rowsFromAI(setName: string, url: string, text: string, profileId: string): Promise<ChecklistEntry[]> {
+  const parts: string[] = [];
+  let cur = "";
+  for (const line of text.slice(0, 200000).split("\n")) {
+    if (cur.length + line.length > 40000) { parts.push(cur); cur = ""; }
+    cur += line + "\n";
+  }
+  if (cur.trim()) parts.push(cur);
+  const lists = await Promise.all(parts.slice(0, 5).map((chunk, i) =>
+    askGemini([{ text: `SET: ${setName}\nPAGE: ${url}${parts.length > 1 ? ` (part ${i + 1} of ${parts.length})` : ""}\n\nPAGE TEXT:\n${chunk}` }], CHECKLIST_PROMPT, 55000, profileId, { maxTokens: 32000 })
+      .then((j) => parseRows(Array.isArray(j?.cards) ? (j.cards as unknown[]) : []))
+      .catch(() => [] as ChecklistEntry[])));
+  return dedupe(lists.flat()).slice(0, 2000);
+}
+
+/** Raw text from Tavily, or the page fetched directly, with one line per row. */
+const cleanRaw = (raw?: string) => (raw && raw.length > 100 ? raw.replace(/\u00a0/g, " ") : null);
+
+export type Tried = { site: string; cards: number; note: string };
+
+/**
+ * Everything else: find checklist pages and read them.
+ * 1 search; if nothing covers the cards you own, 1 more search limited to full-checklist sites.
+ * Each page is read as a numbered list first (no AI), then by Gemini; the most complete result wins.
+ */
+async function webChecklist(setName: string, profileId: string): Promise<{ list: ChecklistEntry[]; url: string; complete: boolean; tried: Tried[] } | null> {
+  const owned = await ownedNumbers(profileId, setName);
+  const tried: Tried[] = [];
+  const seen = new Set<string>();
+  let best: { list: ChecklistEntry[]; url: string; score: number } | null = null;
+  const started = Date.now();
+
   const rank = (r: WebResult) => {
     const i = PREFERRED.findIndex((d) => r.url.includes(d));
-    return (i === -1 ? 50 : i) - (/checklist/i.test(r.title + r.url) ? 20 : 0) + (/ebay\./i.test(r.url) ? 100 : 0);
+    return (i === -1 ? 50 : i) - (/checklist/i.test(r.title + r.url) ? 20 : 0) + (/ebay\.|facebook\.|reddit\./i.test(r.url) ? 100 : 0);
   };
-  const owned = await ownedNumbers(profileId, setName);
-  const candidates = [...results].sort((a, b) => rank(a) - rank(b)).slice(0, 4);
-  let best: { list: ChecklistEntry[]; url: string; score: number } | null = null;
-  for (const c of candidates) {
-    const text = await pageText(c.url);
-    if (!text || text.length < 100) continue;
-    const j = await askGemini([{ text: `SET: ${setName}\nPAGE: ${c.url}\n\nPAGE TEXT:\n${text.slice(0, 120000)}` }], CHECKLIST_PROMPT, 55000, profileId, { maxTokens: 60000 }).catch(() => null);
-    const list = parseRows(Array.isArray(j?.cards) ? (j!.cards as unknown[]) : []).slice(0, 2000);
-    if (list.length < 8) continue;
-    if (plausible(list, owned)) return { list, url: c.url, complete: true };
-    const score = coverage(list, owned) * 10000 + list.length;
-    if (!best || score > best.score) best = { list, url: c.url, score };
+
+  async function readPages(results: WebResult[], max: number) {
+    for (const c of [...results].sort((a, b) => rank(a) - rank(b)).filter((r) => !seen.has(r.url)).slice(0, max)) {
+      if (Date.now() - started > 80_000) break; // stay inside the request time limit
+      seen.add(c.url);
+      const site = (() => { try { return new URL(c.url).hostname.replace(/^www\./, ""); } catch { return c.url; } })();
+      const text = cleanRaw(c.raw) ?? (await pageText(c.url));
+      if (!text || text.length < 100) { tried.push({ site, cards: 0, note: "couldn't read the page" }); continue; }
+      const fromText = rowsFromText(text);
+      const fromAI = plausible(fromText, owned) && fromText.length >= 50 ? [] : await rowsFromAI(setName, c.url, text, profileId);
+      // Prefer whichever reading covers your cards; then the longer one.
+      const pick = [fromAI, fromText].sort((a, b) => Number(plausible(b, owned)) - Number(plausible(a, owned)) || b.length - a.length)[0];
+      if (pick.length < 8) { tried.push({ site, cards: pick.length, note: "no checklist on this page" }); continue; }
+      const ok = plausible(pick, owned);
+      tried.push({ site, cards: pick.length, note: ok ? "used" : coverage(pick, owned) < 0.8 ? "missing most of your cards" : "too few cards" });
+      const score = (ok ? 1e7 : 0) + coverage(pick, owned) * 10000 + pick.length;
+      if (!best || score > best.score) best = { list: pick, url: c.url, score };
+      if (ok) return true;
+    }
+    return false;
   }
-  return best ? { list: best.list, url: best.url, complete: false } : null;
+
+  if (await readPages(await checklistSearch(`${setName} trading cards complete checklist`, profileId), 4)) {
+    return { list: best!.list, url: best!.url, complete: true, tried };
+  }
+  // Second (and last) try: only sites that publish whole checklists on one page.
+  if (await readPages(await checklistSearch(`${setName} base set checklist`, profileId, ["thehobbytracker.com", "sportscardchecklist.com", "tcdb.com"]), 3)) {
+    return { list: best!.list, url: best!.url, complete: true, tried };
+  }
+  console.warn("Checklist search for", setName, "found no complete list:", JSON.stringify(tried));
+  const b = best as { list: ChecklistEntry[]; url: string; score: number } | null;
+  return b ? { list: b.list, url: b.url, complete: false, tried } : tried.length ? { list: [], url: "", complete: false, tried } : null;
 }
 
 // ---------------------------------------------------------------- operations
@@ -210,11 +287,15 @@ async function libraryChecklist(setName: string): Promise<Found | null> {
   return { list: shared.entries.map((e) => ({ ...e, est_aud: prices ? prices.find(e) : null })), url: shared.source_url ?? "", source: shared.source ?? "web", shared: true, pricedAt: prices?.pricedAt ?? null };
 }
 
+/** What the last web lookup tried (shown to the owner when a checklist can't be completed). */
+let lastTried: Tried[] = [];
+
 /**
  * Find a set's checklist: shared library (free) → Pokémon database (free) → web (1 search, only if `search`).
  * A web find is saved to the library, so tracking or previewing it again costs nothing.
  */
 export async function findChecklist(profileId: string, setName: string, opts: { search: boolean; force?: boolean }): Promise<(Found & { needsSearch?: false }) | { needsSearch: true } | null> {
+  lastTried = [];
   // The library's list is skipped when asked to look again, or when it clearly doesn't cover the cards you own.
   const lib = opts.force ? null : await libraryChecklist(setName);
   if (lib && plausible(lib.list, await ownedNumbers(profileId, setName))) { await countSaved(profileId, lib.source === "manual" ? 0 : 1); return lib; }
@@ -224,8 +305,9 @@ export async function findChecklist(profileId: string, setName: string, opts: { 
   }
   if (!opts.search) return lib ?? { needsSearch: true };
   const w = await webChecklist(setName, profileId);
+  lastTried = w?.tried ?? [];
   // Keep whichever list is more complete: the new find or the library's.
-  if (!w) return lib;
+  if (!w || !w.list.length) return lib;
   if (lib && lib.list.length >= w.list.length) return lib;
   await saveSharedSet(setName, "web", w.url || null, w.list, null, { replaceSmaller: true });
   return { list: w.list, url: w.url, source: "web", shared: false, incomplete: !w.complete };
@@ -243,7 +325,7 @@ export async function buildChecklist(profileId: string, set: SetRow, pasted?: st
     const f = await findChecklist(profileId, set.name, { search: true, force: opts.force });
     if (f && !f.needsSearch) found = f;
   }
-  if (!found) return { ok: false as const, total: 0 };
+  if (!found) return { ok: false as const, total: 0, tried: lastTried };
 
   // Replace the old checklist (owned cards keep their data; their link is cleared then re-made).
   await setCardsOf(profileId).delete().eq("set_id", set.id);
@@ -262,7 +344,7 @@ export async function buildChecklist(profileId: string, set: SetRow, pasted?: st
   // Warn when the list still doesn't cover the cards you own (e.g. the page only had part of the set).
   const owned = await ownedNumbers(profileId, set.name);
   const incomplete = found.source !== "manual" && !plausible(found.list, owned);
-  return { ok: true as const, total: rows.length, linked, source: found.source, shared: !!found.shared, incomplete, owned: owned.size };
+  return { ok: true as const, total: rows.length, linked, source: found.source, shared: !!found.shared, incomplete, owned: owned.size, tried: lastTried };
 }
 
 const PRICE_PROMPT = `You estimate typical values for every card in a trading card set, for a collector in Australia.

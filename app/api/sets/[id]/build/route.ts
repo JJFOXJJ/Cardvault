@@ -14,7 +14,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     // force: "Find checklist again" — ignore the shared library's copy and search afresh.
     const r = await buildChecklist(me.id, set, body?.pasted, { force: !!body?.force });
-    if (!r.ok) return jsonError("Couldn't find a checklist for this set online. You can paste one instead.", 404);
+    if (!r.ok) {
+      const t = (r.tried ?? []).map((x) => `${x.site}: ${x.note}`).join("; ");
+      return jsonError(`Couldn't find a checklist for this set online.${t ? ` Tried — ${t}.` : ""}`, 404);
+    }
     return NextResponse.json(r);
   } catch (e) {
     console.error(e);
