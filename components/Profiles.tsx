@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/client";
+import { api, aud } from "@/lib/client";
 import { UsageMeter } from "./Usage";
 
-type P = { id: string; name: string; is_admin: boolean; created_at: string; cards?: number };
+type P = { id: string; name: string; is_admin: boolean; created_at: string; cards?: number; value?: number; waiting?: number };
 type Data = { me: { id: string; name: string; is_admin: boolean }; profiles: P[] };
 
 const pinOk = (p: string) => /^\d{4,12}$/.test(p);
@@ -72,6 +72,10 @@ export default function Profiles() {
 
   if (!data) return error ? <p className="error">{error}</p> : <div className="scanning"><span className="spinner big" /></div>;
   const { me, profiles } = data;
+  const mine = profiles.find((p) => p.id === me.id);
+  const summary = (p: P) =>
+    `${p.cards ?? 0} card${p.cards === 1 ? "" : "s"} · ${aud(p.value ?? 0)}${p.waiting ? ` · ${p.waiting} waiting` : ""}`;
+  const everyone = profiles.reduce((t, p) => ({ cards: t.cards + (p.cards ?? 0), value: t.value + (p.value ?? 0) }), { cards: 0, value: 0 });
 
   return (
     <div className="stack">
@@ -90,6 +94,7 @@ export default function Profiles() {
 
       <section className="panel stack">
         <h2 style={{ fontSize: 18 }}>You{me.is_admin ? " · admin" : ""}</h2>
+        {mine && <p className="small muted" style={{ margin: "-6px 0 0" }}>Your collection: {summary(mine)}</p>}
         <form className="row" onSubmit={(e) => { e.preventDefault(); run("name", () => api(`/api/profiles/${me.id}`, { method: "PATCH", body: JSON.stringify({ name: myName }) }), "Name updated."); }}>
           <input value={myName} onChange={(e) => setMyName(e.target.value)} maxLength={40} style={{ flex: 1, width: "auto" }} aria-label="Your name" />
           <button className="btn small" disabled={!!busy || !myName.trim() || myName.trim() === me.name}>Save name</button>
@@ -152,12 +157,19 @@ export default function Profiles() {
           </section>
 
           <section className="panel coll-list">
+            <div className="coll-row" style={{ cursor: "default" }}>
+              <div style={{ flex: 1 }}>
+                <div className="t">Everyone</div>
+                <div className="small muted">{profiles.length} profile{profiles.length === 1 ? "" : "s"} · {everyone.cards} card{everyone.cards === 1 ? "" : "s"}</div>
+              </div>
+              <b>{aud(everyone.value)}</b>
+            </div>
             {profiles.map((p) => (
               <div key={p.id} className="coll-row" style={{ cursor: "default", flexWrap: "wrap" }}>
                 <span className="avatar">{p.name.slice(0, 1).toUpperCase()}</span>
                 <div style={{ flex: "1 1 140px", minWidth: 0 }}>
                   <div className="t">{p.name}{p.id === me.id ? " (you)" : ""}</div>
-                  <div className="small muted">{p.cards ?? 0} card{p.cards === 1 ? "" : "s"}{p.is_admin ? " · admin" : ""}</div>
+                  <div className="small muted">{summary(p)}{p.is_admin ? " · admin" : ""}</div>
                 </div>
                 {p.id !== me.id && (
                   <div className="row" style={{ gap: 4 }}>
