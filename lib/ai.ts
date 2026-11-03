@@ -54,7 +54,7 @@ const CATEGORIES = "Marvel, Basketball, The Simpsons, Pokémon, Other";
 
 const IDENTIFY_PROMPT = `You are an expert trading card cataloguer. The collection mixes Marvel, basketball, The Simpsons and other cards, and may include Pokémon.
 
-Identify the card in the photo(s). Read everything visible: player/character, card title, year, brand/manufacturer, set or series, card number (usually on the back), parallel/insert/refractor/holo, serial numbering (e.g. 23/99), autograph or memorabilia, and any grading slab label (company + grade).
+Identify the card in the photo(s). Read everything visible: player/character, card title, year, brand/manufacturer, set or series, card number (only if you can actually see it — usually on the back), parallel/insert/refractor/holo, serial numbering (e.g. 23/99), autograph or memorabilia, and any grading slab label (company + grade).
 Use your knowledge of card sets to fill in the set name and year when the design makes it clear. If unsure, give your best guess and set confidence to "low".
 
 Reply with a JSON object with exactly these keys:
@@ -68,7 +68,7 @@ Reply with a JSON object with exactly these keys:
   "manufacturer": string or null (e.g. "Fleer", "SkyBox", "Panini", "Upper Deck"),
   "set_name": the set / collection, e.g. "1992 Marvel Masterpieces" or "2023-24 Panini Prizm", or null,
   "existing_collection": if the owner lists existing collections below and this card belongs to one of them, that collection's name copied EXACTLY; otherwise null,
-  "card_number": string or null,
+  "card_number": the number PRINTED on the card, exactly as shown, or null if it isn't visible in the photos (it's usually on the back — if only the front was photographed, use null; never guess it from memory),
   "variant": parallel / insert / holo / serial numbering, or null,
   "graded": e.g. "PSA 9", or null if raw,
   "image_query": a web image search query that would find a clean scan of the FRONT of this exact card,

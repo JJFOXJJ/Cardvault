@@ -5,10 +5,10 @@ import { askGemini } from "./ai";
 import type { WebResult } from "./images";
 import { round, usdToAud } from "./fx";
 import { cardsOf, removeStoredImage, setCardsOf, setsOf } from "./supabase";
-import { checklistSearch, imageSearch, searchAllowed, webSearch } from "./search";
+import { checklistSearch, imageSearch, readPage, searchAllowed, webSearch } from "./search";
 import {
   countSaved, keepPicture, pictureKey, saveSharedSet, saveSharedSetPrices,
-  sharedPictures, sharedSet, sharedSetPrices, correctSharedSetNames,
+  sharedPictures, sharedSet, sharedSetPrices,
 } from "./shared";
 
 export type ChecklistEntry = { number: string | null; name: string; subset: string | null; image_url?: string | null; est_aud?: number | null };
@@ -93,7 +93,7 @@ async function pageText(url: string): Promise<string | null> {
     return html
       .replace(/<(script|style|noscript|svg|nav|footer|header)[\s\S]*?<\/\1>/gi, " ")
       .replace(/<\/(tr|p|li|h\d|div|br)>|<br\s*\/?>/gi, "\n")
-      .replace(/<\/t[dh]>/gi, " \t ")
+      .replace(/<\/t[dh]>/gi, " | ") // keep table cells apart, so a name isn't merged with the team column
       .replace(/<[^>]+>/g, " ")
       .replace(/&amp;/g, "&").replace(/&#0?39;|&apos;|&rsquo;/g, "'").replace(/&quot;/g, '"').replace(/&nbsp;/g, " ").replace(/&[a-z]+;/g, " ")
       .replace(/[ \t]+/g, " ")
@@ -115,35 +115,44 @@ Use this compact JSON: { "cards": [ [number, name, subset], ... ] } where number
 
 const PREFERRED = ["thehobbytracker.com", "sportscardchecklist.com", "cardboardconnection.com", "tcdb.com", "sportscardchecklists.com", "beckett.com", "nonsportupdate.com", "scifihobby.com", "trading-card-checklist.com", "cardcollectorcentral.com", "psacard.com"];
 
-/** Card numbers of the cards you own in this collection — used to spot a checklist that's obviously incomplete. */
-async function ownedNumbers(profileId: string, setName: string): Promise<Set<string>> {
-  return new Set((await ownedCards(profileId, setName)).map((c) => c.num));
-}
-type Owned = { num: string; who: string };
-/** Your cards in this collection with a number: their number and player/character name. */
+/** Insert / parallel cards belong to separate checklists, not the base set. */
+export const isInsertCard = (c: { variant?: string | null; card_number?: string | null; name?: string | null }) =>
+  /insert|showdown|parallel|refractor|die.?cut|mark of excellence|thunder|lightning|future shock|skyslam|high altitude|driving force|cliffhanger|great balls/i.test(`${c.variant ?? ""} ${c.name ?? ""}`) ||
+  /^[a-z]+[-.]?\d*$/i.test((c.card_number ?? "").trim()) || /[a-z]{2,}\d/i.test((c.card_number ?? "").trim());
+
+type Owned = { num: string; who: string; insert: boolean };
+/** Your cards in this collection: number (often unreliable — fronts don't show it), player name, insert or not. */
 async function ownedCards(profileId: string, setName: string): Promise<Owned[]> {
-  const { data } = await cardsOf(profileId).select("card_number, subject, name").ilike("set_name", setName.replace(/[%_]/g, "\\$&")).neq("status", "pending");
-  const seen = new Set<string>();
-  return (data ?? []).map((c) => ({ num: normNum(c.card_number), who: normName(c.subject || c.name) }))
-    .filter((c) => c.num && !seen.has(c.num) && seen.add(c.num));
+  const { data } = await cardsOf(profileId).select("card_number, subject, name, variant").ilike("set_name", setName.replace(/[%_]/g, "\\$&")).neq("status", "pending");
+  return (data ?? []).map((c) => ({ num: normNum(c.card_number), who: c.subject || c.name || "", insert: isInsertCard(c) }));
 }
 
-/** Of your cards whose number is on the list, how many have the same player at that number? (catches made-up lists) */
-/** Same person/character? One name contains the other, or the same surname (letters only — numbers never count). */
+const isCombo = (s: string | null | undefined) => /\/|\bvs\.?\b|&/i.test(s ?? "");
+/** Same person/character? One name contains the other, or the same surname (letters only). Combo cards only match combos. */
 export function samePerson(x: string | null | undefined, y: string | null | undefined) {
-  const words = (v: string) => v.split(" ").filter((w) => /[a-z]/.test(w) && !/^\d+$/.test(w));
+  if (isCombo(x) !== isCombo(y)) return false;
+  const words = (v: string) => v.split(" ").filter((w) => /[a-z]/.test(w) && !/^\d+$/.test(w) && !["cf", "rc", "rookie"].includes(w));
   const wa = words(normName(x)), wb = words(normName(y));
   if (!wa.length || !wb.length) return false;
-  const ja = wa.join(" "), jb = wb.join(" ");
-  return ja.includes(jb) || jb.includes(ja) || (wa.at(-1)!.length >= 3 && wa.at(-1) === wb.at(-1));
+  // Whole words only: every word of one name appears in the other ("Glen Rice" ~ "Glen Rice Jr"), or same surname + first initial.
+  const sa = new Set(wa), sb = new Set(wb);
+  return wa.every((w) => sb.has(w)) || wb.every((w) => sa.has(w)) || (wa.at(-1)!.length >= 3 && wa.at(-1) === wb.at(-1) && wa[0]?.[0] === wb[0]?.[0]);
 }
 
-function agreement(list: ChecklistEntry[], owned: Owned[]) {
-  const at = new Map(list.map((e) => [normNum(e.number), normName(e.name)]));
-  const same = samePerson;
-  const checked = owned.filter((o) => o.who && at.has(o.num));
-  return { checked: checked.length, agree: checked.length ? checked.filter((o) => same(o.who, at.get(o.num)!)).length / checked.length : 0 };
+/**
+ * How well a checklist covers your base-set cards, by PLAYER (numbers from photos of card fronts are often guesses).
+ * 1 = every player you own is on it. Inserts are ignored — they have their own checklists.
+ */
+function coverage(list: ChecklistEntry[], owned: Owned[]) {
+  const base = owned.filter((o) => !o.insert && o.who);
+  if (!base.length) return 1;
+  return base.filter((o) => list.some((e) => samePerson(o.who, e.name))).length / base.length;
 }
+/** Plausible = at least as many cards as your base cards, and nearly all your players are on it. */
+export const plausible = (list: ChecklistEntry[], owned: Owned[]) => {
+  const base = owned.filter((o) => !o.insert && o.who).length;
+  return list.length >= Math.max(8, base) && (base < 3 || coverage(list, owned) >= 0.8);
+};
 
 const KNOWLEDGE_PROMPT = `You are a trading card checklist expert. From your own knowledge, list the cards in the named set, in number order:
 the base set, plus its numbered insert sets if you know them (put the insert set's name in subset).
@@ -152,10 +161,10 @@ If you don't reliably know this set's checklist, reply { "known": false, "total"
 
 /**
  * Last resort when the web only has partial checklists: Gemini's own knowledge of the set (no search used),
- * accepted ONLY if it agrees with the cards you own (same players at the same numbers).
+ * accepted ONLY if nearly every player you own is on it.
  */
 async function knowledgeChecklist(setName: string, profileId: string, owned: Owned[]): Promise<ChecklistEntry[] | null> {
-  if (owned.length < 5) return null; // too few of your cards to check it against
+  if (owned.filter((o) => !o.insert && o.who).length < 5) return null; // too few of your cards to check it against
   const first = await askGemini([{ text: `SET: ${setName}` }], KNOWLEDGE_PROMPT, 50000, profileId, { maxTokens: 32000 }).catch(() => null);
   if (!first?.known) return null;
   let list = parseRows(Array.isArray(first.cards) ? (first.cards as unknown[]) : []);
@@ -168,19 +177,9 @@ async function knowledgeChecklist(setName: string, profileId: string, owned: Own
     if (!rows.length) break;
     list = dedupe([...list, ...rows]);
   }
-  const a = agreement(list, owned);
-  return a.checked >= 5 && a.agree >= 0.9 && coverage(list, new Set(owned.map((o) => o.num))) >= 0.9 ? list.sort(numericSort) : null;
+  // Accept only if nearly every player you own appears on it (a made-up list won't have them).
+  return owned.filter((o) => !o.insert && o.who).length >= 5 && coverage(list, owned) >= 0.9 ? list.sort(numericSort) : null;
 }
-
-/** How well a checklist covers the cards you own (1 = every owned number is on it). */
-function coverage(list: ChecklistEntry[], owned: Set<string>) {
-  if (!owned.size) return 1;
-  const nums = new Set(list.map((e) => normNum(e.number)).filter(Boolean));
-  return [...owned].filter((n) => nums.has(n)).length / owned.size;
-}
-/** Plausible = at least as many cards as you own, and nearly all your card numbers are on it. */
-export const plausible = (list: ChecklistEntry[], owned: Set<string>) =>
-  list.length >= Math.max(8, owned.size) && (owned.size < 3 || coverage(list, owned) >= 0.8);
 
 function parseRows(raw: unknown[]): ChecklistEntry[] {
   return dedupe(raw.map((x) => {
@@ -247,13 +246,27 @@ const cleanRaw = (raw?: string) => (raw && raw.length > 100 ? raw.replace(/\u00a
 
 export type Tried = { site: string; cards: number; note: string };
 
+/** A checklist page the owner pointed to (just the link — the app reads the page). */
+export async function checklistFromUrl(setName: string, url: string, profileId: string): Promise<ChecklistEntry[]> {
+  let u: URL;
+  try { u = new URL(url.trim()); } catch { throw new Error("That doesn't look like a web link."); }
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("That doesn't look like a web link.");
+  const text = (await pageText(u.href)) ?? (await readPage(u.href, profileId));
+  if (!text || text.length < 100) throw new Error("Couldn't read that page — the site may block apps. Try another checklist site.");
+  const fromText = rowsFromText(text);
+  const fromAI = fromText.length >= 50 ? [] : await rowsFromAI(setName, u.href, text, profileId);
+  const list = fromText.length >= fromAI.length ? fromText : fromAI;
+  if (list.length < 8) throw new Error("Couldn't find a numbered checklist on that page.");
+  return list;
+}
+
 /**
  * Everything else: find checklist pages and read them.
  * 1 search; if nothing covers the cards you own, 1 more search limited to full-checklist sites.
  * Each page is read as a numbered list first (no AI), then by Gemini; the most complete result wins.
  */
 async function webChecklist(setName: string, profileId: string): Promise<{ list: ChecklistEntry[]; url: string; complete: boolean; tried: Tried[]; source?: string } | null> {
-  const owned = await ownedNumbers(profileId, setName);
+  const owned = await ownedCards(profileId, setName);
   const tried: Tried[] = [];
   const seen = new Set<string>();
   let best: { list: ChecklistEntry[]; url: string; score: number } | null = null;
@@ -295,12 +308,11 @@ async function webChecklist(setName: string, profileId: string): Promise<{ list:
     return { list: best!.list, url: best!.url, complete: true, tried };
   }
   // Several partial pages (e.g. a price guide showing 150 cards a page) can add up to the whole set.
-  const mine = await ownedCards(profileId, setName);
+  const mine = owned;
   if (lists.length > 1) {
     const sorted = [...lists].sort((a, b) => b.list.length - a.list.length);
     const merged = dedupe(sorted.flatMap((l) => l.list).filter((e, i, all) => !e.number || all.findIndex((x) => normNum(x.number) === normNum(e.number)) === i)).sort(numericSort);
-    const ag = agreement(merged, mine);
-    if (plausible(merged, owned) && (ag.checked < 5 || ag.agree >= 0.75)) {
+    if (plausible(merged, owned)) {
       tried.push({ site: "pages combined", cards: merged.length, note: "used" });
       return { list: merged, url: sorted[0].url, complete: true, tried };
     }
@@ -311,7 +323,7 @@ async function webChecklist(setName: string, profileId: string): Promise<{ list:
     tried.push({ site: "AI knowledge (checked against your cards)", cards: known.length, note: "used" });
     return { list: known, url: "", complete: true, tried, source: "ai" };
   }
-  tried.push({ site: "AI knowledge", cards: 0, note: mine.length < 5 ? "not enough of your cards to check it" : "didn't match your cards" });
+  tried.push({ site: "AI knowledge", cards: 0, note: mine.filter((o) => !o.insert && o.who).length < 5 ? "not enough of your cards to check it" : "didn't match your cards" });
   console.warn("Checklist search for", setName, "found no complete list:", JSON.stringify(tried));
   const b = best as { list: ChecklistEntry[]; url: string; score: number } | null;
   return b ? { list: b.list, url: b.url, complete: false, tried } : tried.length ? { list: [], url: "", complete: false, tried } : null;
@@ -319,89 +331,89 @@ async function webChecklist(setName: string, profileId: string): Promise<{ list:
 
 // ---------------------------------------------------------------- operations
 
+type MatchCard = { id: string; card_number: string | null; name: string; subject: string | null; variant?: string | null };
+type MatchEntry = { id: string; number: string | null; name: string; subset?: string | null };
+
 /**
- * Link cards already in the vault to their checklist entries. Your scanned cards are trusted:
- *  1. same number AND same player → linked
- *  2. a scanned card whose number is on the list but with a different player: the checklist is wrong there,
- *     so that entry is corrected to your card's player → linked (scanned numbers are trusted)
- *  3. otherwise (not scanned, or the number isn't on the list) the player's name elsewhere → linked there
- *  4. anything else stays unlinked (shown on the set page)
+ * Match your cards to checklist entries BY PLAYER. Card numbers read from photos are often guesses
+ * (the number is usually on the back), so they're only used to choose between a player's several cards.
+ * Insert cards are only matched to entries of the same insert set. Returns the matches and number fixes.
+ */
+export function matchCards(cards: MatchCard[], entries: MatchEntry[]) {
+  const used = new Set<string>();
+  const out = new Map<string, { entry: MatchEntry; numberFix: string | null }>();
+  const n = (x: string | null | undefined) => Number(normNum(x));
+  const fits = (c: MatchCard, e: MatchEntry) => {
+    const insert = isInsertCard(c);
+    if (!insert) return !/insert/i.test(e.subset ?? "");
+    const v = (c.variant ?? "").toLowerCase();
+    return !!e.subset && (samePerson(v, e.subset) || v.includes(e.subset.toLowerCase().split(" ")[0]));
+  };
+  // Best name tier only: exact name, then one name containing the other, then surname + first initial.
+  const candidatesFor = (c: MatchCard) => {
+    const who = c.subject || c.name;
+    const ok = entries.filter((e) => fits(c, e) && samePerson(who, e.name));
+    const exact = ok.filter((e) => normName(e.name) === normName(who));
+    if (exact.length) return exact;
+    const words = (x: string) => new Set(normName(x).split(" "));
+    const contains = ok.filter((e) => { const a = words(who), b = words(e.name); return [...a].every((w) => b.has(w)) || [...b].every((w) => a.has(w)); });
+    return contains.length ? contains : ok;
+  };
+  const all = cards.map((c) => ({ c, cands: candidatesFor(c) })).filter((x) => x.cands.length);
+  const link = (c: MatchCard, pick: MatchEntry, sure: boolean) => {
+    used.add(pick.id);
+    out.set(c.id, { entry: pick, numberFix: sure && pick.number && normNum(pick.number) !== normNum(c.card_number) ? pick.number : null });
+  };
+
+  // 1. Players with only one card in the set.
+  const anchors: number[] = [];
+  for (const { c, cands } of all.filter((x) => x.cands.length === 1)) {
+    link(c, cands[0], true);
+    if (Number.isFinite(n(cands[0].number))) anchors.push(n(cands[0].number));
+  }
+  // 2. Players with several cards (e.g. one per series): pick the one in the part of the set where your other
+  //    cards are (you probably bought packs from that series). A printed number that matches wins outright.
+  const near = (e: MatchEntry) => anchors.filter((a) => Math.abs(a - n(e.number)) <= 40).length;
+  for (const { c, cands } of all.filter((x) => x.cands.length > 1)) {
+    const free = cands.filter((e) => !used.has(e.id));
+    const pool = free.length ? free : cands; // all taken → another copy of a card you already have
+    const sameNum = pool.find((e) => e.number && normNum(e.number) === normNum(c.card_number));
+    if (sameNum) { link(c, sameNum, false); continue; }
+    const ranked = [...pool].sort((a, b) => near(b) - near(a) || Math.abs(n(a.number) - n(c.card_number)) - Math.abs(n(b.number) - n(c.card_number)));
+    // Sure enough to fix the number when the choice is clear-cut (3+ of your cards nearby, twice the alternative).
+    const sure = near(ranked[0]) >= 3 && near(ranked[0]) >= 2 * (ranked[1] ? near(ranked[1]) : 0);
+    link(c, ranked[0], sure);
+  }
+  return out;
+}
+
+/**
+ * Link cards already in the vault to their checklist entries (by player — see matchCards).
+ * When a player has only one card in the set, your card's number is corrected from the checklist.
  * `reset` first clears this set's links, so matching can be redone without a new search.
  */
 export async function linkExistingCards(profileId: string, set: SetRow, opts: { reset?: boolean } = {}) {
-  const { data: entries } = await setCardsOf(profileId).select("id, number, name").eq("set_id", set.id);
+  const { data: entries } = await setCardsOf(profileId).select("id, number, name, subset").eq("set_id", set.id);
   const ids = (entries ?? []).map((e) => e.id);
   if (opts.reset && ids.length) {
     for (let i = 0; i < ids.length; i += 300) await cardsOf(profileId).update({ checklist_id: null }).in("checklist_id", ids.slice(i, i + 300));
   }
-  const { data: owned } = await cardsOf(profileId).select("id, card_number, name, subject, checklist_id, photo_url, confidence")
+  const { data: owned } = await cardsOf(profileId).select("id, card_number, name, subject, variant, checklist_id")
     .ilike("set_name", set.name.replace(/[%_]/g, "\\$&")).neq("status", "pending");
-  const shifted = set.source !== "manual" && set.source !== "pokemon" ? await fixShiftedNames(profileId, entries ?? [], owned ?? []) : 0;
-  const byNum = new Map<string, { id: string; name: string }>(), byName = new Map<string, string>();
-  for (const e of entries ?? []) {
-    if (e.number && !byNum.has(normNum(e.number))) byNum.set(normNum(e.number), e);
-    if (!byName.has(normName(e.name))) byName.set(normName(e.name), e.id);
+  const todo = (owned ?? []).filter((c) => !c.checklist_id);
+  const matches = matchCards(todo, entries ?? []);
+  let linked = 0, numbersFixed = 0;
+  for (const c of todo) {
+    const m = matches.get(c.id);
+    if (!m) continue;
+    // Only fix numbers from lists we trust (not the AI's own knowledge).
+    const fix = m.numberFix && set.source !== "ai" ? { card_number: m.numberFix, name: c.name.replace(/#\s*\S+/, `#${m.numberFix}`) } : {};
+    await cardsOf(profileId).update({ checklist_id: m.entry.id, ...fix }).eq("id", c.id);
+    linked++;
+    if ("card_number" in fix) numbersFixed++;
   }
-  const used = new Set((owned ?? []).map((c) => c.checklist_id).filter(Boolean));
-  let linked = 0, corrected = 0;
-  const fixes: { number: string; name: string }[] = [];
-  // Cards whose number AND name agree go first, so they can't be pushed aside by a misnumbered card.
-  const cards = [...(owned ?? [])].filter((c) => !c.checklist_id);
-  const exact = (c: (typeof cards)[number]) => {
-    const e = c.card_number ? byNum.get(normNum(c.card_number)) : undefined;
-    return !!e && samePerson(c.subject || c.name, e.name);
-  };
-  cards.sort((a, b) => Number(exact(b)) - Number(exact(a)));
-  const canCorrect = set.source !== "manual" && set.source !== "pokemon";
-  for (const c of cards) {
-    const who = c.subject || c.name;
-    const atNum = c.card_number ? byNum.get(normNum(c.card_number)) : undefined;
-    const scanned = !!c.photo_url && c.confidence !== "low" && !!c.subject?.trim();
-    let hit: string | undefined;
-    if (atNum && !used.has(atNum.id) && (samePerson(who, atNum.name) || !normName(who))) hit = atNum.id;
-    else if (atNum && !used.has(atNum.id) && scanned && canCorrect) {
-      // A scanned card's number is trusted: the checklist has the wrong player at this number, so fix it.
-      await setCardsOf(profileId).update({ name: c.subject!.trim() }).eq("id", atNum.id);
-      fixes.push({ number: c.card_number!, name: c.subject!.trim() });
-      corrected++;
-      hit = atNum.id;
-    } else {
-      // Not scanned, or its number isn't on the list (e.g. misread): find the player by name.
-      const named = byName.get(normName(c.subject)) ?? byName.get(normName(c.name));
-      if (named && !used.has(named)) hit = named;
-    }
-    if (hit) {
-      await cardsOf(profileId).update({ checklist_id: hit }).eq("id", c.id);
-      used.add(hit);
-      linked++;
-    }
-  }
-  // Only share corrections when they're the exception — a list that's wrong everywhere isn't fixed this way.
-  if (fixes.length && fixes.length <= Math.max(3, (owned ?? []).length * 0.25)) await correctSharedSetNames(set.name, fixes);
-  return { linked, corrected, shifted, owned: (owned ?? []).length };
-}
-
-/**
- * Some lists have every name one or two places off (e.g. card #6's player listed at #5). If your scanned cards
- * consistently match the name a fixed number of places away, move every name back into place. Returns the shift.
- */
-async function fixShiftedNames(profileId: string, entries: { id: string; number: string | null; name: string }[], owned: { card_number: string | null; subject: string | null; photo_url: string | null; confidence: string | null }[]) {
-  const at = new Map<number, { id: string; name: string }>();
-  for (const e of entries) if (/^\d+$/.test(normNum(e.number))) at.set(Number(normNum(e.number)), e);
-  const scanned = owned.filter((c) => c.photo_url && c.confidence !== "low" && c.subject && /^\d+$/.test(normNum(c.card_number)));
-  const wrong = scanned.filter((c) => !samePerson(c.subject, at.get(Number(normNum(c.card_number)))?.name));
-  if (wrong.length < 3) return 0;
-  let best = 0, bestHits = 0;
-  for (const k of [-3, -2, -1, 1, 2, 3]) {
-    const hits = wrong.filter((c) => samePerson(c.subject, at.get(Number(normNum(c.card_number)) + k)?.name)).length;
-    if (hits > bestHits) { best = k; bestHits = hits; }
-  }
-  if (!best || bestHits < Math.max(3, wrong.length * 0.6)) return 0;
-  // Name for #n comes from the entry k places away.
-  const updates = [...at.entries()].map(([n, e]) => ({ id: e.id, name: at.get(n + best)?.name })).filter((u) => u.name);
-  for (const u of updates) await setCardsOf(profileId).update({ name: u.name }).eq("id", u.id);
-  for (const e of entries) { const u = updates.find((x) => x.id === e.id); if (u) e.name = u.name!; }
-  return best;
+  const inserts = (owned ?? []).filter((c) => !c.checklist_id && !matches.has(c.id) && isInsertCard(c)).length;
+  return { linked: linked + (owned ?? []).filter((c) => c.checklist_id).length, numbersFixed, inserts, owned: (owned ?? []).length };
 }
 
 type Found = { list: ChecklistEntry[]; url: string; source: string; shared?: boolean; pricedAt?: string | null; incomplete?: boolean };
@@ -431,7 +443,7 @@ export async function findChecklist(profileId: string, setName: string, opts: { 
   lastTried = [];
   // The library's list is skipped when asked to look again, or when it clearly doesn't cover the cards you own.
   const lib = opts.force ? null : await libraryChecklist(setName);
-  if (lib && plausible(lib.list, await ownedNumbers(profileId, setName))) { await countSaved(profileId, lib.source === "manual" ? 0 : 1); return lib; }
+  if (lib && plausible(lib.list, await ownedCards(profileId, setName))) { await countSaved(profileId, lib.source === "manual" ? 0 : 1); return lib; }
   if (await looksPokemon(profileId, setName)) {
     const p = await pokemonChecklist(setName);
     if (p) return { ...p, source: "pokemon" };
@@ -447,10 +459,14 @@ export async function findChecklist(profileId: string, setName: string, opts: { 
 }
 
 /** Find and store the full checklist for a set. Replaces any previous checklist; owned cards are re-linked. */
-export async function buildChecklist(profileId: string, set: SetRow, pasted?: string, opts: { force?: boolean } = {}) {
+export async function buildChecklist(profileId: string, set: SetRow, pasted?: string, opts: { force?: boolean; url?: string } = {}) {
   let found: Found | null = null;
 
-  if (pasted?.trim()) {
+  if (opts.url?.trim()) {
+    const list = await checklistFromUrl(set.name, opts.url, profileId);
+    found = { list, url: opts.url.trim(), source: "web" };
+    await saveSharedSet(set.name, "web", opts.url.trim(), list, null, { replaceSmaller: true });
+  } else if (pasted?.trim()) {
     const list = parsePasted(pasted);
     if (list.length) found = { list, url: "", source: "manual" };
     else throw new Error("Couldn't read any cards from that text. Put one card per line, like “1 Captain America”.");
@@ -471,15 +487,13 @@ export async function buildChecklist(profileId: string, set: SetRow, pasted?: st
   await setsOf(profileId)
     .update({ source: found.source, source_url: found.url || null, total: rows.length, priced_at: pricedAt, tracking: true })
     .eq("id", set.id);
-  const { linked, corrected, owned: ownedCount } = await linkExistingCards(profileId, { ...set, source: found.source });
+  const { linked, numbersFixed } = await linkExistingCards(profileId, { ...set, source: found.source });
   if (pricedAt) await fillMissingValues(profileId, set.id);
   if (!found.shared && found.source === "manual") await saveSharedSet(set.name, found.source, found.url || null, found.list, null, { replaceSmaller: true });
   // Warn when the list still doesn't cover the cards you own (e.g. the page only had part of the set).
-  const owned = await ownedNumbers(profileId, set.name);
-  // A list that needed many corrections from your cards is probably wrong overall.
-  const unreliable = corrected > Math.max(3, ownedCount * 0.25);
-  const incomplete = found.source !== "manual" && (!plausible(found.list, owned) || unreliable);
-  return { ok: true as const, total: rows.length, linked, corrected, unreliable, source: found.source, shared: !!found.shared, incomplete, owned: owned.size, tried: lastTried };
+  const owned = await ownedCards(profileId, set.name);
+  const incomplete = found.source !== "manual" && !plausible(found.list, owned);
+  return { ok: true as const, total: rows.length, linked, numbersFixed, source: found.source, shared: !!found.shared, incomplete, owned: owned.filter((o) => !o.insert).length, tried: lastTried };
 }
 
 const PRICE_PROMPT = `You estimate typical values for every card in a trading card set, for a collector in Australia.

@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jsonError, requireProfile } from "@/lib/auth";
 import { cardsOf, setsOf } from "@/lib/supabase";
-import { findChecklist, normNum } from "@/lib/checklist";
+import { findChecklist, matchCards } from "@/lib/checklist";
 import { searchAllowed } from "@/lib/search";
 
 export const maxDuration = 90;
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
   const esc = name.replace(/[%_]/g, "\\$&");
   const [{ data: mine }, { data: tracked }] = await Promise.all([
-    cardsOf(me.id).select("id, name, subject, card_number, image_url, photo_url, quantity, aud_mid").ilike("set_name", esc).neq("status", "pending"),
+    cardsOf(me.id).select("id, name, subject, card_number, variant, image_url, photo_url, quantity, aud_mid").ilike("set_name", esc).neq("status", "pending"),
     setsOf(me.id).select("id, tracking, total").ilike("name", esc).maybeSingle(),
   ]);
   const cards = (mine ?? []).map((c) => ({ id: c.id, name: c.name, subject: c.subject, number: c.card_number, image: c.image_url ?? c.photo_url, qty: c.quantity ?? 1, value: c.aud_mid }));
@@ -41,19 +41,16 @@ export async function GET(req: NextRequest) {
   if (!found) return NextResponse.json({ ...base, checklist: null, notFound: search });
   if (found.needsSearch) return NextResponse.json({ ...base, checklist: null, needsSearch: true });
 
-  // Match your cards to the checklist: by number, then by name.
-  const byNum = new Map<string, (typeof cards)[number]>(), byName = new Map<string, (typeof cards)[number]>();
-  for (const c of cards) {
-    if (c.number) byNum.set(normNum(c.number), c);
-    byName.set(normName(c.subject || c.name), c);
-  }
-  const used = new Set<string>();
-  const entries = found.list.map((e) => {
-    const c = (e.number && byNum.get(normNum(e.number))) || byName.get(normName(e.name)) || null;
-    const mineHere = c && !used.has(c.id) ? c : null;
-    if (mineHere) used.add(mineHere.id);
-    return { number: e.number, name: e.name, subset: e.subset, image: e.image_url ?? null, est: e.est_aud ?? null, card: mineHere ? { id: mineHere.id, image: mineHere.image, qty: mineHere.qty } : null };
+  // Match your cards to the checklist by player (numbers from photos are often guesses).
+  const list = found.list.map((e, i) => ({ ...e, id: String(i) }));
+  const m = matchCards((mine ?? []).map((c) => ({ id: c.id, card_number: c.card_number, name: c.name, subject: c.subject, variant: c.variant })), list);
+  const byEntry = new Map<string, (typeof cards)[number]>();
+  for (const c of cards) { const hit = m.get(c.id); if (hit && !byEntry.has(hit.entry.id)) byEntry.set(hit.entry.id, c); }
+  const entries = list.map((e) => {
+    const c = byEntry.get(e.id);
+    return { number: e.number, name: e.name, subset: e.subset, image: e.image_url ?? null, est: e.est_aud ?? null, card: c ? { id: c.id, image: c.image, qty: c.qty } : null };
   });
+  const used = new Set([...m.keys()]);
   return NextResponse.json({
     ...base,
     checklist: { source: found.source, url: found.url || null, shared: !!found.shared, entries },

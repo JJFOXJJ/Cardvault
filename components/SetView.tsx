@@ -33,6 +33,7 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [paste, setPaste] = useState("");
+  const [link, setLink] = useState("");
   const [showOptions, setShowOptions] = useState(false);
   const [autoPics, setAutoPics] = useState(true);
   const [picStatus, setPicStatus] = useState("");
@@ -175,14 +176,11 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
   }
 
   async function relink() {
-    const r = await api<{ linked: number; corrected: number; shifted: number; owned: number }>(`/api/sets/${set.id}/relink`, { method: "POST" });
-    const parts = [`${r.linked} of your ${r.owned} cards matched`];
-    if (r.shifted) parts.push("the checklist's names were out of step and have been moved back into place");
-    if (r.corrected) parts.push(`${r.corrected} name${r.corrected === 1 ? "" : "s"} corrected from your scanned cards`);
+    const r = await api<{ linked: number; numbersFixed: number; inserts: number; owned: number }>(`/api/sets/${set.id}/relink`, { method: "POST" });
+    const parts = [`${r.linked} of your ${r.owned} cards matched by player`];
+    if (r.numbersFixed) parts.push(`${r.numbersFixed} card number${r.numbersFixed === 1 ? "" : "s"} corrected from the checklist`);
+    if (r.inserts) parts.push(`${r.inserts} insert card${r.inserts === 1 ? "" : "s"} (not part of the base set)`);
     setToast(parts.join(" · ") + ".");
-    if (r.corrected > Math.max(3, r.owned * 0.25)) {
-      setError("Much of this checklist didn't match your scanned cards, so cards you don't own may still have wrong names. Try “Find checklist again” in Set options.");
-    }
   }
 
   const pct = stats.total ? Math.round((stats.owned / stats.total) * 100) : 0;
@@ -283,7 +281,7 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
         <div className="merge-hint row">
           <span style={{ flex: "1 1 220px" }}>
             <b>{mismatched} card{mismatched === 1 ? " is" : "s are"} in a spot with a different player&apos;s name</b>
-            <span className="muted small"> — the checklist is wrong there. Fix matching re-links your cards and corrects those names from your scanned cards (no search).</span>
+            <span className="muted small"> — Fix matching re-links your cards by player and corrects their card numbers from the checklist (no search).</span>
           </span>
           <button className="btn primary small" disabled={!!busy} onClick={() => action("relink", relink)}>
             {busy === "relink" ? <span className="spinner" /> : "Fix matching"}
@@ -297,8 +295,9 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
             <span className="muted small"> — tap to see them.</span>
           </summary>
           <p className="small muted" style={{ margin: "8px 0" }}>
-            Either the checklist is incomplete ({entries.length} cards) — open <b>Set options</b> and tap <b>Find checklist again</b> — or a card was
-            identified wrongly (e.g. the wrong year, a different SkyBox set, or a misread number). Open a card to fix its collection or number.
+            Insert cards (e.g. Thunder &amp; Lightning, SkySlams) have their own checklists, so they&apos;re expected here. For any other card, the
+            player isn&apos;t on this {entries.length}-card checklist: either the card is from a different set or year, or the checklist is
+            incomplete (<b>Set options</b> → <b>Find checklist again</b>).
           </p>
           <ul className="want-list">
             {unlinked.map((c) => (
@@ -422,9 +421,6 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
               </button>
               <button className="btn small" disabled={!!busy} onClick={() => { if (confirm("Search for this set's checklist again? Your ticked cards stay ticked.")) action("build", async () => {
                   const r = await api<{ total: number; incomplete?: boolean; owned?: number; tried?: { site: string; cards: number; note: string }[] }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ force: true }) });
-                  if (r.incomplete && (r as { unreliable?: boolean }).unreliable) {
-                    throw new Error("The checklist found didn't match most of your scanned cards, so parts of it are probably wrong. Your cards are matched by player where possible; anything that didn't fit is listed under “aren't on this checklist”.");
-                  }
                   if (r.incomplete) {
                     const t = (r.tried ?? []).map((x) => `${x.site} (${x.cards ? `${x.cards} cards, ` : ""}${x.note})`).join(", ");
                     throw new Error(`Found ${r.total} cards, but that doesn't cover the cards you own, so it may still be incomplete.${t ? ` Pages tried: ${t}.` : ""}`);
@@ -437,6 +433,20 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
               </button>
             </div>
             <p className="small muted" style={{ margin: 0 }}>Re-checking set values only fills in estimates — cards that already have a value keep it. To re-value one card, open it and tap “Update value”.</p>
+            <div className="field">
+              <span>Use a checklist page</span>
+              <span className="small muted">Paste the link to a page that lists the whole set (e.g. from thehobbytracker.com) — the app reads it.</span>
+              <div className="row">
+                <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" inputMode="url" style={{ flex: 1, width: "auto" }} />
+                <button className="btn small" disabled={!!busy || !/^https?:\/\//.test(link.trim())} onClick={() => action("link", async () => {
+                  const r = await api<{ total: number; linked: number; numbersFixed?: number }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ url: link.trim() }) });
+                  setLink("");
+                  setToast(`Checklist of ${r.total} cards loaded · ${r.linked} of your cards matched${r.numbersFixed ? ` · ${r.numbersFixed} card numbers corrected` : ""}.`);
+                })}>
+                  {busy === "link" ? <span className="spinner" /> : "Use link"}
+                </button>
+              </div>
+            </div>
             <label className="field">
               <span>Replace with a pasted checklist</span>
               <textarea value={paste} onChange={(e) => setPaste(e.target.value)} rows={4} placeholder={"1 Captain America\n2 Captain Britain"} />

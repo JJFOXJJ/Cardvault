@@ -85,8 +85,8 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 textarea { resize: vertical; min-height: 70px; }
-label.field { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
-label.field > span { font-weight: 600; letter-spacing: 0.02em; }
+label.field, div.field { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+label.field > span, div.field > span:first-child { font-weight: 600; letter-spacing: 0.02em; }
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 520px) { .grid-2 { grid-template-columns: 1fr; } }

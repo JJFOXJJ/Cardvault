@@ -70,6 +70,26 @@ export async function checklistSearch(query: string, profileId?: string, domains
   return braveWeb(q, profileId).catch(() => [] as WebResult[]);
 }
 
+/** Read one page's text through Tavily (works on sites that block our server). 1 credit per 5 pages. */
+export async function readPage(url: string, profileId?: string): Promise<string | null> {
+  const key = process.env.TAVILY_API_KEY?.trim();
+  if (!key || !(await tavilyAllowed())) return null;
+  try {
+    const res = await fetch("https://api.tavily.com/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ urls: [url], format: "text" }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (res.status !== 401 && res.status !== 403) await recordUsage("tavily", profileId);
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => ({}))) as { results?: { url?: string; raw_content?: string }[] };
+    return data.results?.[0]?.raw_content ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Pictures of a card. Tavily first; Brave's image search if Tavily finds none. */
 export async function imageSearch(query: string, count = 8, profileId?: string): Promise<ImageCandidate[]> {
   const t = await tavily(query, { images: true, max: 5 }, profileId);

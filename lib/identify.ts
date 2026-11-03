@@ -3,7 +3,8 @@ import { pokemonImages, type ImageCandidate } from "./images";
 import { round, usdToAud } from "./fx";
 import { cardsOf } from "./supabase";
 import { imageSearch, searchAllowed, searchConfigured } from "./search";
-import { countSaved, pictureKey, sharedPicture } from "./shared";
+import { countSaved, pictureKey, sharedPicture, sharedSet } from "./shared";
+import { isInsertCard, samePerson } from "./checklist";
 
 export type IdentifyResult = {
   card: Identification;
@@ -18,6 +19,17 @@ export type IdentifyResult = {
 export async function runIdentify(profileId: string, images: { mediaType: string; data: string }[], hint?: string | null): Promise<IdentifyResult> {
   const searchCapped = searchConfigured() && !(await searchAllowed());
   const card = await identifyCard(images, hint ?? undefined, await existingSetNames(profileId), profileId);
+
+  // The number is usually only on the back. If it wasn't visible, take it from the set's checklist
+  // in the shared library — but only when that player has exactly one card in the set.
+  if (!card.card_number && card.set_name && card.subject && !isInsertCard(card)) {
+    const list = await sharedSet(card.set_name).catch(() => null);
+    const hits = (list?.entries ?? []).filter((e) => samePerson(card.subject, e.name));
+    if (hits.length === 1 && hits[0].number) {
+      card.card_number = hits[0].number;
+      card.name = `${card.subject} #${hits[0].number}`;
+    }
+  }
 
   let candidates: ImageCandidate[] = [];
   let value = card.value_usd;
