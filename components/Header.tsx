@@ -10,6 +10,7 @@ import { popPrevious, recordVisit } from "@/lib/nav-history";
 function parentOf(path: string, pending: string | null) {
   if (path.startsWith("/add") && pending) return "/pending";
   if (path.startsWith("/sets/")) return "/sets";
+  if (path.startsWith("/shared/")) return "/sharing";
   return "/";
 }
 

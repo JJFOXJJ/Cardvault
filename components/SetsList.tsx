@@ -66,14 +66,14 @@ export default function SetsList({ sets, untracked, unsorted }: { sets: SetSumma
       {untracked.length > 0 && (
         <section className="stack" style={{ gap: 8, marginTop: 10 }}>
           <h2 style={{ fontSize: 15 }}>Collections you could track</h2>
-          <p className="small muted" style={{ margin: 0 }}>Tracking finds the full checklist so you can see what&apos;s missing. Uses about 2 searches.</p>
+          <p className="small muted" style={{ margin: 0 }}>Tap one to see every card in the set before tracking it. Tracking finds the full checklist so you can see what&apos;s missing — up to 2 searches, or none if it&apos;s already in the shared library.</p>
           {untracked.map((u) => (
             <div key={u.name} className="set-row quiet">
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <Link href={`/sets/preview?name=${encodeURIComponent(u.name)}`} style={{ flex: 1, minWidth: 0 }} className="preview-link">
                 <b>{u.name}</b>
-                <div className="small muted">{u.cards} card{u.cards === 1 ? "" : "s"} in your vault</div>
+                <div className="small muted">{u.cards} card{u.cards === 1 ? "" : "s"} in your vault · <span style={{ color: "var(--cyan)" }}>See all cards →</span></div>
                 {working === u.name && <div className="small" style={{ color: "var(--cyan)", marginTop: 4 }}>{stage}</div>}
-              </div>
+              </Link>
               <button className="btn small" onClick={() => start(u.name)} disabled={busy}>
                 {working === u.name ? <span className="spinner" /> : "Track set"}
               </button>

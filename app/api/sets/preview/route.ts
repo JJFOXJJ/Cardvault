@@ -1,0 +1,61 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { jsonError, requireProfile } from "@/lib/auth";
+import { cardsOf, setsOf } from "@/lib/supabase";
+import { findChecklist, normNum } from "@/lib/checklist";
+import { searchAllowed } from "@/lib/search";
+
+export const maxDuration = 90;
+
+const normName = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/#\s*\S+/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * Preview every card in a collection before tracking it.
+ * GET /api/sets/preview?name=X            → your cards, plus the checklist if it's free (library / Pokémon)
+ * GET /api/sets/preview?name=X&search=1   → also searches the web for it (1 search), saved to the library
+ * Nothing is tracked or changed in your vault.
+ */
+export async function GET(req: NextRequest) {
+  const me = await requireProfile();
+  if (me instanceof NextResponse) return me;
+  const name = req.nextUrl.searchParams.get("name")?.trim();
+  if (!name || name.length > 200) return jsonError("Missing set name");
+  const search = req.nextUrl.searchParams.get("search") === "1";
+
+  const esc = name.replace(/[%_]/g, "\\$&");
+  const [{ data: mine }, { data: tracked }] = await Promise.all([
+    cardsOf(me.id).select("id, name, subject, card_number, image_url, photo_url, quantity, aud_mid").ilike("set_name", esc).neq("status", "pending"),
+    setsOf(me.id).select("id, tracking, total").ilike("name", esc).maybeSingle(),
+  ]);
+  const cards = (mine ?? []).map((c) => ({ id: c.id, name: c.name, subject: c.subject, number: c.card_number, image: c.image_url ?? c.photo_url, qty: c.quantity ?? 1, value: c.aud_mid }));
+
+  if (search && !(await searchAllowed())) return jsonError("This month's free searches are used up — the checklist can be loaded after the reset.", 429);
+  let found;
+  try {
+    found = await findChecklist(me.id, name, { search });
+  } catch (e) {
+    return jsonError(e instanceof Error ? e.message : "Couldn't look up the checklist", 502);
+  }
+
+  const base = { name, cards, trackedId: tracked?.tracking && tracked.total ? tracked.id : null };
+  if (!found) return NextResponse.json({ ...base, checklist: null, notFound: search });
+  if (found.needsSearch) return NextResponse.json({ ...base, checklist: null, needsSearch: true });
+
+  // Match your cards to the checklist: by number, then by name.
+  const byNum = new Map<string, (typeof cards)[number]>(), byName = new Map<string, (typeof cards)[number]>();
+  for (const c of cards) {
+    if (c.number) byNum.set(normNum(c.number), c);
+    byName.set(normName(c.subject || c.name), c);
+  }
+  const used = new Set<string>();
+  const entries = found.list.map((e) => {
+    const c = (e.number && byNum.get(normNum(e.number))) || byName.get(normName(e.name)) || null;
+    const mineHere = c && !used.has(c.id) ? c : null;
+    if (mineHere) used.add(mineHere.id);
+    return { number: e.number, name: e.name, subset: e.subset, image: e.image_url ?? null, est: e.est_aud ?? null, card: mineHere ? { id: mineHere.id, image: mineHere.image, qty: mineHere.qty } : null };
+  });
+  return NextResponse.json({
+    ...base,
+    checklist: { source: found.source, url: found.url || null, shared: !!found.shared, entries },
+    unmatched: cards.filter((c) => !used.has(c.id)).length,
+  });
+}

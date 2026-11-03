@@ -162,35 +162,51 @@ export async function linkExistingCards(profileId: string, set: SetRow) {
   return linked;
 }
 
+type Found = { list: ChecklistEntry[]; url: string; source: string; shared?: boolean; pricedAt?: string | null };
+
+async function looksPokemon(profileId: string, setName: string) {
+  if (/pok[eé]mon/i.test(setName)) return true;
+  const { data: sample } = await cardsOf(profileId).select("category").eq("set_name", setName).limit(5);
+  return (sample ?? []).some((r) => /pok[eé]mon/i.test(r.category ?? ""));
+}
+
+/** The shared library's checklist for this set, if anyone found it already (free). Pokémon is left to the official database. */
+async function libraryChecklist(setName: string): Promise<Found | null> {
+  const shared = await sharedSet(setName).catch(() => null);
+  if (!shared || shared.source === "pokemon") return null;
+  const prices = sharedSetPrices(shared);
+  return { list: shared.entries.map((e) => ({ ...e, est_aud: prices ? prices.find(e) : null })), url: shared.source_url ?? "", source: shared.source ?? "web", shared: true, pricedAt: prices?.pricedAt ?? null };
+}
+
+/**
+ * Find a set's checklist: shared library (free) → Pokémon database (free) → web (1 search, only if `search`).
+ * A web find is saved to the library, so tracking or previewing it again costs nothing.
+ */
+export async function findChecklist(profileId: string, setName: string, opts: { search: boolean }): Promise<(Found & { needsSearch?: false }) | { needsSearch: true } | null> {
+  const lib = await libraryChecklist(setName);
+  if (lib) { await countSaved(profileId, lib.source === "manual" ? 0 : 1); return lib; }
+  if (await looksPokemon(profileId, setName)) {
+    const p = await pokemonChecklist(setName);
+    if (p) return { ...p, source: "pokemon" };
+  }
+  if (!opts.search) return { needsSearch: true };
+  const w = await webChecklist(setName, profileId);
+  if (!w) return null;
+  await saveSharedSet(setName, "web", w.url || null, w.list, null);
+  return { ...w, source: "web", shared: false };
+}
+
 /** Find and store the full checklist for a set. Replaces any previous checklist; owned cards are re-linked. */
 export async function buildChecklist(profileId: string, set: SetRow, pasted?: string) {
-  let found: { list: ChecklistEntry[]; url: string; source: string; shared?: boolean; pricedAt?: string | null } | null = null;
+  let found: Found | null = null;
 
   if (pasted?.trim()) {
     const list = parsePasted(pasted);
     if (list.length) found = { list, url: "", source: "manual" };
     else throw new Error("Couldn't read any cards from that text. Put one card per line, like “1 Captain America”.");
   } else {
-    // Someone already found this set's checklist: reuse it (no search, no AI).
-    // (Pokémon sets come from the free official database instead, with every card's picture.)
-    const shared = await sharedSet(set.name).catch(() => null);
-    if (shared && shared.source !== "pokemon") {
-      const prices = sharedSetPrices(shared);
-      found = { list: shared.entries.map((e) => ({ ...e, est_aud: prices ? prices.find(e) : null })), url: shared.source_url ?? "", source: shared.source ?? "web", shared: true, pricedAt: prices?.pricedAt ?? null };
-      await countSaved(profileId, shared.source === "manual" ? 0 : 1);
-    }
-  }
-  if (!found && !pasted?.trim()) {
-    const { data: sample } = await cardsOf(profileId).select("category").eq("set_name", set.name).limit(5);
-    const looksPokemon = /pok[eé]mon/i.test(set.name) || (sample ?? []).some((r) => /pok[eé]mon/i.test(r.category ?? ""));
-    if (looksPokemon) {
-      const p = await pokemonChecklist(set.name);
-      if (p) found = { ...p, source: "pokemon" };
-    }
-    if (!found) {
-      const w = await webChecklist(set.name, profileId);
-      if (w) found = { ...w, source: "web" };
-    }
+    const f = await findChecklist(profileId, set.name, { search: true });
+    if (f && !f.needsSearch) found = f;
   }
   if (!found) return { ok: false as const, total: 0 };
 
@@ -207,7 +223,7 @@ export async function buildChecklist(profileId: string, set: SetRow, pasted?: st
     .eq("id", set.id);
   const linked = await linkExistingCards(profileId, set);
   if (pricedAt) await fillMissingValues(profileId, set.id);
-  if (!found.shared && found.source !== "pokemon") await saveSharedSet(set.name, found.source, found.url || null, found.list, null);
+  if (!found.shared && found.source === "manual") await saveSharedSet(set.name, found.source, found.url || null, found.list, null);
   return { ok: true as const, total: rows.length, linked, source: found.source, shared: !!found.shared };
 }
 

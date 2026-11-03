@@ -558,3 +558,4 @@ a:active .art, a:active.set-row, .btn:active { opacity: 0.85; }
 .switch-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--cyan); }
 .shared-banner { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
 .shared-banner .chip { text-decoration: none; }
+.preview-link { color: inherit; text-decoration: none; }
