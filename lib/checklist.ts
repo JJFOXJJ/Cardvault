@@ -83,25 +83,62 @@ async function pokemonChecklist(setName: string): Promise<{ list: ChecklistEntry
 }
 
 /** Plain text of a web page, keeping one line per row/list item. */
-async function pageText(url: string): Promise<string | null> {
+async function fetchHtml(url: string): Promise<string | null> {
   try {
     const u = new URL(url);
     if (u.protocol !== "https:") return null;
     const res = await fetch(u, { headers: { "User-Agent": "Mozilla/5.0 (CardVault checklist)", Accept: "text/html" }, signal: AbortSignal.timeout(12000), redirect: "follow" });
     if (!res.ok || !(res.headers.get("content-type") ?? "").includes("html")) return null;
-    const html = (await res.text()).slice(0, 2_000_000);
-    return html
-      .replace(/<(script|style|noscript|svg|nav|footer|header)[\s\S]*?<\/\1>/gi, " ")
-      .replace(/<\/(tr|p|li|h\d|div|br)>|<br\s*\/?>/gi, "\n")
-      .replace(/<\/t[dh]>/gi, " | ") // keep table cells apart, so a name isn't merged with the team column
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&amp;/g, "&").replace(/&#0?39;|&apos;|&rsquo;/g, "'").replace(/&quot;/g, '"').replace(/&nbsp;/g, " ").replace(/&[a-z]+;/g, " ")
-      .replace(/[ \t]+/g, " ")
-      .replace(/\n\s*\n+/g, "\n")
-      .trim();
+    return (await res.text()).slice(0, 3_000_000);
   } catch {
     return null;
   }
+}
+
+function htmlToText(html: string) {
+  return html
+    .replace(/<(head|script|style|noscript|svg|nav|footer|header)[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<\/(tr|p|li|h\d|div|br)>|<br\s*\/?>|<(tr|li|div|p|h\d)(\s[^>]*)?>/gi, "\n")
+    .replace(/<\/t[dh]>/gi, " | ") // keep table cells apart, so a name isn't merged with the team column
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&").replace(/&#0?39;|&apos;|&rsquo;/g, "'").replace(/&quot;/g, '"').replace(/&nbsp;/g, " ").replace(/&[a-z]+;/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n")
+    .trim();
+}
+
+/** Plain text of a web page, keeping one line per row/list item. */
+async function pageText(url: string): Promise<string | null> {
+  const html = await fetchHtml(url);
+  return html ? htmlToText(html) : null;
+}
+
+/**
+ * Pages that build their list in the browser usually carry the data inside the page as JSON
+ * (e.g. {"number":"227","name":"Chris Webber"}). Read card number + name pairs straight from it.
+ */
+export function rowsFromPageData(html: string): ChecklistEntry[] {
+  const text = html.replace(/\\"/g, '"').replace(/\\u0026/g, "&");
+  const NUMK = '(?:number|card_number|cardNumber|card_no|cardNo|num|no)';
+  const NAMEK = '(?:name|player|playerName|player_name|title|subject|cardName|card_name)';
+  const val = '"?([A-Za-z]{0,4}-?\\d{1,4}[a-z]?)"?';
+  const str = '"([^"\\\\]{2,90})"';
+  const pats = [
+    new RegExp(`"${NUMK}"\\s*:\\s*${val}\\s*,[^{}\\[\\]]{0,400}?"${NAMEK}"\\s*:\\s*${str}`, "g"),
+    new RegExp(`"${NAMEK}"\\s*:\\s*${str}\\s*,[^{}\\[\\]]{0,400}?"${NUMK}"\\s*:\\s*${val}`, "g"),
+  ];
+  const out: ChecklistEntry[] = [];
+  const seen = new Set<string>();
+  pats.forEach((re, k) => {
+    for (const m of text.matchAll(re)) {
+      const [num, name] = k === 0 ? [m[1], m[2]] : [m[2], m[1]];
+      if (!/[A-Za-z]/.test(name) || /^https?:/.test(name) || seen.has(normNum(num))) continue;
+      seen.add(normNum(num));
+      out.push({ number: num, name: name.trim(), subset: null });
+    }
+  });
+  const plain = out.filter((e) => /^\d+$/.test(e.number ?? "")).length;
+  return out.length >= 20 && plain / out.length >= 0.6 ? dedupe(out).sort(numericSort) : [];
 }
 
 const CHECKLIST_PROMPT = `You extract trading card checklists from web page text.
@@ -200,25 +237,31 @@ function parseRows(raw: unknown[]): ChecklistEntry[] {
 export function rowsFromText(text: string): ChecklistEntry[] {
   const out: ChecklistEntry[] = [];
   const seen = new Set<string>();
-  for (const raw of text.split(/\r?\n/)) {
-    let line = raw.trim();
-    if (!line || line.length > 160) continue;
-    let num: string | undefined, name: string | undefined;
+  const NUM = /^#?\s*([A-Z]{0,4}-?\d{1,4}[a-z]?)$/;
+  const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const add = (num: string, name: string) => {
+    if (/^(19|20)\d{2}$/.test(num)) return; // a year, not a card number
+    // Tidy the name: drop trailing counts/prices ("Larry Johnson 0", "… $1.25") and RC/SP tags.
+    const clean = name.replace(/\s*\|.*$/, "").replace(/(\s+(\$?\d+(\.\d+)?|RC|SP|\(RC\)))+$/i, "").trim().slice(0, 120);
+    const k = normNum(num);
+    if (!clean || !/[A-Za-z]/.test(clean) || seen.has(k)) return;
+    seen.add(k);
+    out.push({ number: num.replace(/^#/, ""), name: clean, subset: null });
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.length > 160) continue;
     if (line.includes("|")) {
       const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
-      const i = cells.findIndex((c) => /^#?[A-Z]{0,4}-?\d{1,4}[a-z]?$/.test(c));
-      if (i !== -1 && cells[i + 1] && /[A-Za-z]/.test(cells[i + 1])) { num = cells[i].replace(/^#/, ""); name = cells[i + 1]; }
-    } else {
-      line = line.replace(/\s+/g, " ");
-      const m = line.match(/^#?\s*([A-Z]{0,4}-?\d{1,4}[a-z]?)\s*[.):\-–—]?\s+([A-Za-z"'][^\t]{1,90})$/);
-      if (m) { num = m[1]; name = m[2]; }
+      const j = cells.findIndex((c) => NUM.test(c));
+      if (j !== -1 && cells[j + 1] && /[A-Za-z]/.test(cells[j + 1])) { add(cells[j], cells[j + 1]); continue; }
     }
-    if (!num || !name) continue;
-    if (/^(19|20)\d{2}$/.test(num)) continue; // a year, not a card number
-    const k = normNum(num);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push({ number: num, name: name.replace(/\s+(RC|SP|\(RC\))$/i, "").trim().slice(0, 120), subset: null });
+    const m = line.match(/^#?\s*([A-Z]{0,4}-?\d{1,4}[a-z]?)\s*[.):\-–—]?\s+([A-Za-z"'].{1,90})$/);
+    if (m) { add(m[1], m[2]); continue; }
+    // Number on its own line, name on the next (pages laid out in boxes rather than tables).
+    const n = line.match(NUM);
+    const next = lines[i + 1];
+    if (n && next && /^[A-Za-z"']/.test(next) && !NUM.test(next) && next.length <= 100) { add(n[1], next); i++; }
   }
   // Must look like a real checklist: plenty of rows, mostly plain numbers.
   const plain = out.filter((e) => /^\d+$/.test(e.number ?? "")).length;
@@ -251,12 +294,26 @@ export async function checklistFromUrl(setName: string, url: string, profileId: 
   let u: URL;
   try { u = new URL(url.trim()); } catch { throw new Error("That doesn't look like a web link."); }
   if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("That doesn't look like a web link.");
-  const text = (await pageText(u.href)) ?? (await readPage(u.href, profileId));
-  if (!text || text.length < 100) throw new Error("Couldn't read that page — the site may block apps. Try another checklist site.");
-  const fromText = rowsFromText(text);
-  const fromAI = fromText.length >= 50 ? [] : await rowsFromAI(setName, u.href, text, profileId);
-  const list = fromText.length >= fromAI.length ? fromText : fromAI;
-  if (list.length < 8) throw new Error("Couldn't find a numbered checklist on that page.");
+  // Read the page ourselves first; if that gives no list (blocked, or built by JavaScript), read it through Tavily.
+  const read = async (text: string | null) => {
+    if (!text || text.length < 100) return [] as ChecklistEntry[];
+    const fromText = rowsFromText(text);
+    if (fromText.length >= 50) return fromText;
+    const fromAI = await rowsFromAI(setName, u.href, text, profileId);
+    return fromText.length >= fromAI.length ? fromText : fromAI;
+  };
+  const html = await fetchHtml(u.href);
+  let list = html ? rowsFromPageData(html) : [];
+  if (list.length < 20) {
+    const fromPage = await read(html ? htmlToText(html) : null);
+    if (fromPage.length > list.length) list = fromPage;
+  }
+  if (list.length < 8) {
+    const viaTavily = await readPage(u.href, profileId);
+    if (!viaTavily && !process.env.TAVILY_API_KEY?.trim()) throw new Error("Couldn't find a checklist on that page — it may need a browser to show it. Adding a Tavily key (TAVILY_API_KEY) lets the app read pages like this.");
+    list = await read(viaTavily);
+  }
+  if (list.length < 8) throw new Error("Couldn't find a numbered checklist on that page, even reading it through Tavily. Try another checklist site.");
   return list;
 }
 
