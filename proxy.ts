@@ -7,6 +7,8 @@ export async function proxy(req: NextRequest) {
   if (pathname === "/login" || pathname === "/api/login") return NextResponse.next();
   // Daily keep-awake + backup, called by Vercel's scheduler (returns no data; see the route).
   if (pathname === "/api/cron/daily") return NextResponse.next();
+  // Read-only shared collections (the secret token in the link is checked by the page).
+  if (pathname.startsWith("/share/")) return NextResponse.next();
 
   if (await verifySessionToken(req.cookies.get(SESSION_COOKIE)?.value)) return NextResponse.next();
 

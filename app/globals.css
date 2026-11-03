@@ -540,3 +540,21 @@ a:active .art, a:active.set-row, .btn:active { opacity: 0.85; }
 .svc-list { display: grid; gap: 10px; }
 .svc { display: grid; gap: 6px; background: var(--bg-2); border-radius: 10px; padding: 10px 12px; }
 .svc.off { opacity: .6; }
+
+/* Shared (read-only) collections */
+.share-tabs { flex-wrap: wrap; border-radius: 16px; }
+.share-tabs .n { margin-left: 6px; font-size: 11px; color: var(--muted); }
+.share-tabs .on .n { color: var(--cyan); }
+.want-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
+.want-list li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.want-list .num { flex: none; width: 52px; color: var(--muted); font-family: var(--display); font-size: 12px; }
+.want-list .nm { flex: 1; min-width: 0; }
+.public-top { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.public-top .wrap { display: flex; align-items: center; gap: 10px; }
+.share-card { display: grid; gap: 10px; }
+.share-url { display: flex; gap: 8px; }
+.share-url input { flex: 1; width: auto; font-size: 13px; }
+.switch-row { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.switch-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--cyan); }
+.shared-banner { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.shared-banner .chip { text-decoration: none; }

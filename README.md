@@ -100,6 +100,13 @@ Run `supabase/migrations/006_shared_library.sql` once.
 - "Update value" always looks again, and refreshes the shared price for everyone.
 - Admin page → **Fill from existing cards** adds everyone's existing online pictures, recent prices and checklists in one go (no searches used).
 
+## Sharing (read-only)
+Run `supabase/migrations/007_sharing.sql` once. Then Profiles → **Sharing**.
+- **Read-only link:** anyone with the link sees your collection, sets, wishlist (missing cards from your tracked sets) and spares — no PIN, nothing can be changed. Choose whether values show. **New link** makes the old one stop working; **Turn off** disables it.
+- **Share with people in Card Vault:** pick a profile from the list. They get **Shared with you** on their home screen, and **Trade matches**: your spares they're missing, and theirs you're missing (matched by set and card number).
+- Never shown: notes, the backs of your photos, cards waiting to be identified.
+- **Preview what others see** shows your own view, including your wishlist and spares.
+
 ## Admin overview, backups & keep-awake
 - Profiles → **Admin overview** (admins only): totals for everyone and a per-profile table — numbers only, never anyone's cards.
 - A daily job (`vercel.json` → `/api/cron/daily`, about 4am Sydney) keeps the free Supabase project from pausing and saves a backup of all card details to a private `backups` storage folder (14 days kept). Download or **Back up now** from the admin page. Pictures aren't included. Optional: set `CRON_SECRET` in Vercel so only Vercel can trigger it.
