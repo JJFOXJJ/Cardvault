@@ -117,8 +117,57 @@ const PREFERRED = ["thehobbytracker.com", "sportscardchecklist.com", "cardboardc
 
 /** Card numbers of the cards you own in this collection — used to spot a checklist that's obviously incomplete. */
 async function ownedNumbers(profileId: string, setName: string): Promise<Set<string>> {
-  const { data } = await cardsOf(profileId).select("card_number").ilike("set_name", setName.replace(/[%_]/g, "\\$&")).neq("status", "pending");
-  return new Set((data ?? []).map((c) => normNum(c.card_number)).filter(Boolean));
+  return new Set((await ownedCards(profileId, setName)).map((c) => c.num));
+}
+type Owned = { num: string; who: string };
+/** Your cards in this collection with a number: their number and player/character name. */
+async function ownedCards(profileId: string, setName: string): Promise<Owned[]> {
+  const { data } = await cardsOf(profileId).select("card_number, subject, name").ilike("set_name", setName.replace(/[%_]/g, "\\$&")).neq("status", "pending");
+  const seen = new Set<string>();
+  return (data ?? []).map((c) => ({ num: normNum(c.card_number), who: normName(c.subject || c.name) }))
+    .filter((c) => c.num && !seen.has(c.num) && seen.add(c.num));
+}
+
+/** Of your cards whose number is on the list, how many have the same player at that number? (catches made-up lists) */
+function agreement(list: ChecklistEntry[], owned: Owned[]) {
+  const at = new Map(list.map((e) => [normNum(e.number), normName(e.name)]));
+  // Same person: one name contains the other, or the same surname (letters only — numbers never count).
+  const words = (x: string) => x.split(" ").filter((w) => /[a-z]/.test(w) && !/^\d+$/.test(w));
+  const same = (a: string, b: string) => {
+    const wa = words(a), wb = words(b);
+    if (!wa.length || !wb.length) return false;
+    const ja = wa.join(" "), jb = wb.join(" ");
+    return ja.includes(jb) || jb.includes(ja) || (wa.at(-1)!.length >= 3 && wa.at(-1) === wb.at(-1));
+  };
+  const checked = owned.filter((o) => o.who && at.has(o.num));
+  return { checked: checked.length, agree: checked.length ? checked.filter((o) => same(o.who, at.get(o.num)!)).length / checked.length : 0 };
+}
+
+const KNOWLEDGE_PROMPT = `You are a trading card checklist expert. From your own knowledge, list the cards in the named set, in number order:
+the base set, plus its numbered insert sets if you know them (put the insert set's name in subset).
+Reply with compact JSON: { "known": boolean, "total": number of base cards, "cards": [ [number, name, subset], ... ] }.
+If you don't reliably know this set's checklist, reply { "known": false, "total": 0, "cards": [] }. Never invent players.`;
+
+/**
+ * Last resort when the web only has partial checklists: Gemini's own knowledge of the set (no search used),
+ * accepted ONLY if it agrees with the cards you own (same players at the same numbers).
+ */
+async function knowledgeChecklist(setName: string, profileId: string, owned: Owned[]): Promise<ChecklistEntry[] | null> {
+  if (owned.length < 5) return null; // too few of your cards to check it against
+  const first = await askGemini([{ text: `SET: ${setName}` }], KNOWLEDGE_PROMPT, 50000, profileId, { maxTokens: 32000 }).catch(() => null);
+  if (!first?.known) return null;
+  let list = parseRows(Array.isArray(first.cards) ? (first.cards as unknown[]) : []);
+  const total = Number(first.total) || 0;
+  // Long sets often come back cut short — ask for the rest.
+  for (let i = 0; i < 4 && total && list.filter((e) => /^\d+$/.test(e.number ?? "")).length < total - 2; i++) {
+    const last = Math.max(0, ...list.map((e) => Number(normNum(e.number))).filter(Number.isFinite));
+    const more = await askGemini([{ text: `SET: ${setName}\nContinue the base set checklist from card #${last + 1} to #${total}.` }], KNOWLEDGE_PROMPT, 45000, profileId, { maxTokens: 32000 }).catch(() => null);
+    const rows = parseRows(Array.isArray(more?.cards) ? (more!.cards as unknown[]) : []);
+    if (!rows.length) break;
+    list = dedupe([...list, ...rows]);
+  }
+  const a = agreement(list, owned);
+  return a.checked >= 5 && a.agree >= 0.75 && coverage(list, new Set(owned.map((o) => o.num))) >= 0.9 ? list.sort(numericSort) : null;
 }
 
 /** How well a checklist covers the cards you own (1 = every owned number is on it). */
@@ -201,11 +250,12 @@ export type Tried = { site: string; cards: number; note: string };
  * 1 search; if nothing covers the cards you own, 1 more search limited to full-checklist sites.
  * Each page is read as a numbered list first (no AI), then by Gemini; the most complete result wins.
  */
-async function webChecklist(setName: string, profileId: string): Promise<{ list: ChecklistEntry[]; url: string; complete: boolean; tried: Tried[] } | null> {
+async function webChecklist(setName: string, profileId: string): Promise<{ list: ChecklistEntry[]; url: string; complete: boolean; tried: Tried[]; source?: string } | null> {
   const owned = await ownedNumbers(profileId, setName);
   const tried: Tried[] = [];
   const seen = new Set<string>();
   let best: { list: ChecklistEntry[]; url: string; score: number } | null = null;
+  const lists: { list: ChecklistEntry[]; url: string }[] = [];
   const started = Date.now();
 
   const rank = (r: WebResult) => {
@@ -225,6 +275,7 @@ async function webChecklist(setName: string, profileId: string): Promise<{ list:
       // Prefer whichever reading covers your cards; then the longer one.
       const pick = [fromAI, fromText].sort((a, b) => Number(plausible(b, owned)) - Number(plausible(a, owned)) || b.length - a.length)[0];
       if (pick.length < 8) { tried.push({ site, cards: pick.length, note: "no checklist on this page" }); continue; }
+      lists.push({ list: pick, url: c.url });
       const ok = plausible(pick, owned);
       tried.push({ site, cards: pick.length, note: ok ? "used" : coverage(pick, owned) < 0.8 ? "missing most of your cards" : "too few cards" });
       const score = (ok ? 1e7 : 0) + coverage(pick, owned) * 10000 + pick.length;
@@ -241,6 +292,24 @@ async function webChecklist(setName: string, profileId: string): Promise<{ list:
   if (await readPages(await checklistSearch(`${setName} base set checklist`, profileId, ["thehobbytracker.com", "sportscardchecklist.com", "tcdb.com"]), 3)) {
     return { list: best!.list, url: best!.url, complete: true, tried };
   }
+  // Several partial pages (e.g. a price guide showing 150 cards a page) can add up to the whole set.
+  const mine = await ownedCards(profileId, setName);
+  if (lists.length > 1) {
+    const sorted = [...lists].sort((a, b) => b.list.length - a.list.length);
+    const merged = dedupe(sorted.flatMap((l) => l.list).filter((e, i, all) => !e.number || all.findIndex((x) => normNum(x.number) === normNum(e.number)) === i)).sort(numericSort);
+    const ag = agreement(merged, mine);
+    if (plausible(merged, owned) && (ag.checked < 5 || ag.agree >= 0.75)) {
+      tried.push({ site: "pages combined", cards: merged.length, note: "used" });
+      return { list: merged, url: sorted[0].url, complete: true, tried };
+    }
+  }
+  // Finally: the AI's own knowledge of the set, checked against your cards (no search).
+  const known = await knowledgeChecklist(setName, profileId, mine);
+  if (known) {
+    tried.push({ site: "AI knowledge (checked against your cards)", cards: known.length, note: "used" });
+    return { list: known, url: "", complete: true, tried, source: "ai" };
+  }
+  tried.push({ site: "AI knowledge", cards: 0, note: mine.length < 5 ? "not enough of your cards to check it" : "didn't match your cards" });
   console.warn("Checklist search for", setName, "found no complete list:", JSON.stringify(tried));
   const b = best as { list: ChecklistEntry[]; url: string; score: number } | null;
   return b ? { list: b.list, url: b.url, complete: false, tried } : tried.length ? { list: [], url: "", complete: false, tried } : null;
@@ -309,8 +378,8 @@ export async function findChecklist(profileId: string, setName: string, opts: { 
   // Keep whichever list is more complete: the new find or the library's.
   if (!w || !w.list.length) return lib;
   if (lib && lib.list.length >= w.list.length) return lib;
-  await saveSharedSet(setName, "web", w.url || null, w.list, null, { replaceSmaller: true });
-  return { list: w.list, url: w.url, source: "web", shared: false, incomplete: !w.complete };
+  await saveSharedSet(setName, w.source ?? "web", w.url || null, w.list, null, { replaceSmaller: true });
+  return { list: w.list, url: w.url, source: w.source ?? "web", shared: false, incomplete: !w.complete };
 }
 
 /** Find and store the full checklist for a set. Replaces any previous checklist; owned cards are re-linked. */

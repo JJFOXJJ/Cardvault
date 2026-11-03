@@ -559,3 +559,4 @@ a:active .art, a:active.set-row, .btn:active { opacity: 0.85; }
 .shared-banner { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
 .shared-banner .chip { text-decoration: none; }
 .preview-link { color: inherit; text-decoration: none; }
+.unlinked summary { cursor: pointer; list-style: none; } .unlinked summary::-webkit-details-marker { display: none; } .unlinked { display: block; }

@@ -32,8 +32,9 @@ export default async function SetPage({ params }: { params: Promise<{ id: string
   }
 
   // Cards filed in this collection that the checklist doesn't include — a sign the checklist is incomplete.
-  const { count: unlinked } = await cardsOf(me.id).select("id", { count: "exact", head: true })
-    .ilike("set_name", set.name.replace(/[%_]/g, "\\$&")).neq("status", "pending").is("checklist_id", null);
+  const { data: unlinkedRows } = await cardsOf(me.id).select("id, name, card_number, year")
+    .ilike("set_name", set.name.replace(/[%_]/g, "\\$&")).neq("status", "pending").is("checklist_id", null).limit(300);
+  const unlinked = (unlinkedRows ?? []).map((c) => ({ id: c.id as string, name: c.name as string, number: c.card_number as string | null, year: c.year as string | null }));
 
   const entries: Entry[] = (rows ?? []).map((r) => ({
     id: r.id, number: r.number, name: r.name, subset: r.subset, image: r.image_url, est: r.est_aud == null ? null : Number(r.est_aud),
@@ -44,7 +45,7 @@ export default async function SetPage({ params }: { params: Promise<{ id: string
     <>
       <Header />
       <main className="wrap" style={{ maxWidth: 900 }}>
-        <SetView set={set} entries={entries} unlinked={unlinked ?? 0} />
+        <SetView set={set} entries={entries} unlinked={unlinked} />
       </main>
     </>
   );

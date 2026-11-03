@@ -15,7 +15,7 @@ type Data = {
   needsSearch?: boolean; notFound?: boolean; unmatched?: number;
 };
 
-const SOURCE: Record<string, string> = { pokemon: "the official Pokémon database", web: "a checklist found online", manual: "a checklist someone pasted" };
+const SOURCE: Record<string, string> = { pokemon: "the official Pokémon database", web: "a checklist found online", manual: "a checklist someone pasted", ai: "the AI's knowledge of this set, checked against scanned cards" };
 
 /** Look at every card in a collection before deciding to track it. */
 export default function SetPreview({ name }: { name: string }) {

@@ -21,7 +21,8 @@ type Filter = "all" | "owned" | "missing";
 
 const PER_PAGE = 9;
 
-export default function SetView({ set, entries, unlinked = 0 }: { set: SetRow; entries: Entry[]; unlinked?: number }) {
+type Unlinked = { id: string; name: string; number: string | null; year: string | null };
+export default function SetView({ set, entries, unlinked = [] }: { set: SetRow; entries: Entry[]; unlinked?: Unlinked[] }) {
   const router = useRouter();
   const [view, setView] = useState<View>("grid");
   const [filter, setFilter] = useState<Filter>("all");
@@ -267,13 +268,22 @@ export default function SetView({ set, entries, unlinked = 0 }: { set: SetRow; e
       </div>
 
       {error && <p className="error">{error}</p>}
-      {unlinked > 0 && set.source !== "manual" && (
-        <div className="merge-hint row">
-          <span style={{ flex: "1 1 220px" }}>
-            <b>{unlinked} of your cards in this collection aren&apos;t on this checklist</b>
-            <span className="muted small"> — it may be incomplete (only {entries.length} cards). Open <b>Set options</b> below and tap <b>Find checklist again</b>, or paste the full checklist.</span>
-          </span>
-        </div>
+      {unlinked.length > 0 && (
+        <details className="merge-hint unlinked">
+          <summary>
+            <b>{unlinked.length} of your cards in this collection aren&apos;t on this checklist</b>
+            <span className="muted small"> — tap to see them.</span>
+          </summary>
+          <p className="small muted" style={{ margin: "8px 0" }}>
+            Either the checklist is incomplete ({entries.length} cards) — open <b>Set options</b> and tap <b>Find checklist again</b> — or a card was
+            identified wrongly (e.g. the wrong year, a different SkyBox set, or a misread number). Open a card to fix its collection or number.
+          </p>
+          <ul className="want-list">
+            {unlinked.map((c) => (
+              <li key={c.id}><span className="num">{c.number ? `#${c.number}` : "—"}</span><Link href={`/card/${c.id}`} className="nm">{c.name}</Link>{c.year && <span className="small muted">{c.year}</span>}</li>
+            ))}
+          </ul>
+        </details>
       )}
 
       <div className="set-controls">
@@ -381,7 +391,7 @@ export default function SetView({ set, entries, unlinked = 0 }: { set: SetRow; e
         {showOptions && (
           <div className="stack">
             <p className="small muted" style={{ margin: 0 }}>
-              {set.source === "pokemon" ? "Checklist and prices from the official Pokémon card database." : set.source === "manual" ? "Checklist pasted by you." : set.source_url ? <>Checklist found at <a href={set.source_url} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>{new URL(set.source_url).hostname}</a> — check it looks right.</> : "Checklist found online."}
+              {set.source === "pokemon" ? "Checklist and prices from the official Pokémon card database." : set.source === "manual" ? "Checklist pasted by you." : set.source === "ai" ? "Checklist from the AI's knowledge of this set — checked against your cards (same players at the same numbers)." : set.source_url ? <>Checklist found at <a href={set.source_url} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>{new URL(set.source_url).hostname}</a> — check it looks right.</> : "Checklist found online."}
               {set.priced_at && ` Values estimated ${new Date(set.priced_at).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}.`}
             </p>
             <div className="row">
