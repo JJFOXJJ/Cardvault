@@ -8,7 +8,7 @@ import { cardsOf, removeStoredImage, setCardsOf, setsOf } from "./supabase";
 import { checklistSearch, imageSearch, searchAllowed, webSearch } from "./search";
 import {
   countSaved, keepPicture, pictureKey, saveSharedSet, saveSharedSetPrices,
-  sharedPictures, sharedSet, sharedSetPrices,
+  sharedPictures, sharedSet, sharedSetPrices, correctSharedSetNames,
 } from "./shared";
 
 export type ChecklistEntry = { number: string | null; name: string; subset: string | null; image_url?: string | null; est_aud?: number | null };
@@ -129,16 +129,18 @@ async function ownedCards(profileId: string, setName: string): Promise<Owned[]> 
 }
 
 /** Of your cards whose number is on the list, how many have the same player at that number? (catches made-up lists) */
+/** Same person/character? One name contains the other, or the same surname (letters only — numbers never count). */
+export function samePerson(x: string | null | undefined, y: string | null | undefined) {
+  const words = (v: string) => v.split(" ").filter((w) => /[a-z]/.test(w) && !/^\d+$/.test(w));
+  const wa = words(normName(x)), wb = words(normName(y));
+  if (!wa.length || !wb.length) return false;
+  const ja = wa.join(" "), jb = wb.join(" ");
+  return ja.includes(jb) || jb.includes(ja) || (wa.at(-1)!.length >= 3 && wa.at(-1) === wb.at(-1));
+}
+
 function agreement(list: ChecklistEntry[], owned: Owned[]) {
   const at = new Map(list.map((e) => [normNum(e.number), normName(e.name)]));
-  // Same person: one name contains the other, or the same surname (letters only — numbers never count).
-  const words = (x: string) => x.split(" ").filter((w) => /[a-z]/.test(w) && !/^\d+$/.test(w));
-  const same = (a: string, b: string) => {
-    const wa = words(a), wb = words(b);
-    if (!wa.length || !wb.length) return false;
-    const ja = wa.join(" "), jb = wb.join(" ");
-    return ja.includes(jb) || jb.includes(ja) || (wa.at(-1)!.length >= 3 && wa.at(-1) === wb.at(-1));
-  };
+  const same = samePerson;
   const checked = owned.filter((o) => o.who && at.has(o.num));
   return { checked: checked.length, agree: checked.length ? checked.filter((o) => same(o.who, at.get(o.num)!)).length / checked.length : 0 };
 }
@@ -167,7 +169,7 @@ async function knowledgeChecklist(setName: string, profileId: string, owned: Own
     list = dedupe([...list, ...rows]);
   }
   const a = agreement(list, owned);
-  return a.checked >= 5 && a.agree >= 0.75 && coverage(list, new Set(owned.map((o) => o.num))) >= 0.9 ? list.sort(numericSort) : null;
+  return a.checked >= 5 && a.agree >= 0.9 && coverage(list, new Set(owned.map((o) => o.num))) >= 0.9 ? list.sort(numericSort) : null;
 }
 
 /** How well a checklist covers the cards you own (1 = every owned number is on it). */
@@ -317,27 +319,89 @@ async function webChecklist(setName: string, profileId: string): Promise<{ list:
 
 // ---------------------------------------------------------------- operations
 
-/** Link cards already in the vault for this set to their checklist entries (by number, then by name). */
-export async function linkExistingCards(profileId: string, set: SetRow) {
+/**
+ * Link cards already in the vault to their checklist entries. Your scanned cards are trusted:
+ *  1. same number AND same player → linked
+ *  2. a scanned card whose number is on the list but with a different player: the checklist is wrong there,
+ *     so that entry is corrected to your card's player → linked (scanned numbers are trusted)
+ *  3. otherwise (not scanned, or the number isn't on the list) the player's name elsewhere → linked there
+ *  4. anything else stays unlinked (shown on the set page)
+ * `reset` first clears this set's links, so matching can be redone without a new search.
+ */
+export async function linkExistingCards(profileId: string, set: SetRow, opts: { reset?: boolean } = {}) {
   const { data: entries } = await setCardsOf(profileId).select("id, number, name").eq("set_id", set.id);
-  const { data: owned } = await cardsOf(profileId).select("id, card_number, name, subject, checklist_id").eq("set_name", set.name).neq("status", "pending");
-  const byNum = new Map<string, string>(), byName = new Map<string, string>();
+  const ids = (entries ?? []).map((e) => e.id);
+  if (opts.reset && ids.length) {
+    for (let i = 0; i < ids.length; i += 300) await cardsOf(profileId).update({ checklist_id: null }).in("checklist_id", ids.slice(i, i + 300));
+  }
+  const { data: owned } = await cardsOf(profileId).select("id, card_number, name, subject, checklist_id, photo_url, confidence")
+    .ilike("set_name", set.name.replace(/[%_]/g, "\\$&")).neq("status", "pending");
+  const shifted = set.source !== "manual" && set.source !== "pokemon" ? await fixShiftedNames(profileId, entries ?? [], owned ?? []) : 0;
+  const byNum = new Map<string, { id: string; name: string }>(), byName = new Map<string, string>();
   for (const e of entries ?? []) {
-    if (e.number && !byNum.has(normNum(e.number))) byNum.set(normNum(e.number), e.id);
+    if (e.number && !byNum.has(normNum(e.number))) byNum.set(normNum(e.number), e);
     if (!byName.has(normName(e.name))) byName.set(normName(e.name), e.id);
   }
   const used = new Set((owned ?? []).map((c) => c.checklist_id).filter(Boolean));
-  let linked = 0;
-  for (const c of owned ?? []) {
-    if (c.checklist_id) continue;
-    const hit = (c.card_number && byNum.get(normNum(c.card_number))) || byName.get(normName(c.subject)) || byName.get(normName(c.name));
-    if (hit && !used.has(hit)) {
+  let linked = 0, corrected = 0;
+  const fixes: { number: string; name: string }[] = [];
+  // Cards whose number AND name agree go first, so they can't be pushed aside by a misnumbered card.
+  const cards = [...(owned ?? [])].filter((c) => !c.checklist_id);
+  const exact = (c: (typeof cards)[number]) => {
+    const e = c.card_number ? byNum.get(normNum(c.card_number)) : undefined;
+    return !!e && samePerson(c.subject || c.name, e.name);
+  };
+  cards.sort((a, b) => Number(exact(b)) - Number(exact(a)));
+  const canCorrect = set.source !== "manual" && set.source !== "pokemon";
+  for (const c of cards) {
+    const who = c.subject || c.name;
+    const atNum = c.card_number ? byNum.get(normNum(c.card_number)) : undefined;
+    const scanned = !!c.photo_url && c.confidence !== "low" && !!c.subject?.trim();
+    let hit: string | undefined;
+    if (atNum && !used.has(atNum.id) && (samePerson(who, atNum.name) || !normName(who))) hit = atNum.id;
+    else if (atNum && !used.has(atNum.id) && scanned && canCorrect) {
+      // A scanned card's number is trusted: the checklist has the wrong player at this number, so fix it.
+      await setCardsOf(profileId).update({ name: c.subject!.trim() }).eq("id", atNum.id);
+      fixes.push({ number: c.card_number!, name: c.subject!.trim() });
+      corrected++;
+      hit = atNum.id;
+    } else {
+      // Not scanned, or its number isn't on the list (e.g. misread): find the player by name.
+      const named = byName.get(normName(c.subject)) ?? byName.get(normName(c.name));
+      if (named && !used.has(named)) hit = named;
+    }
+    if (hit) {
       await cardsOf(profileId).update({ checklist_id: hit }).eq("id", c.id);
       used.add(hit);
       linked++;
     }
   }
-  return linked;
+  // Only share corrections when they're the exception — a list that's wrong everywhere isn't fixed this way.
+  if (fixes.length && fixes.length <= Math.max(3, (owned ?? []).length * 0.25)) await correctSharedSetNames(set.name, fixes);
+  return { linked, corrected, shifted, owned: (owned ?? []).length };
+}
+
+/**
+ * Some lists have every name one or two places off (e.g. card #6's player listed at #5). If your scanned cards
+ * consistently match the name a fixed number of places away, move every name back into place. Returns the shift.
+ */
+async function fixShiftedNames(profileId: string, entries: { id: string; number: string | null; name: string }[], owned: { card_number: string | null; subject: string | null; photo_url: string | null; confidence: string | null }[]) {
+  const at = new Map<number, { id: string; name: string }>();
+  for (const e of entries) if (/^\d+$/.test(normNum(e.number))) at.set(Number(normNum(e.number)), e);
+  const scanned = owned.filter((c) => c.photo_url && c.confidence !== "low" && c.subject && /^\d+$/.test(normNum(c.card_number)));
+  const wrong = scanned.filter((c) => !samePerson(c.subject, at.get(Number(normNum(c.card_number)))?.name));
+  if (wrong.length < 3) return 0;
+  let best = 0, bestHits = 0;
+  for (const k of [-3, -2, -1, 1, 2, 3]) {
+    const hits = wrong.filter((c) => samePerson(c.subject, at.get(Number(normNum(c.card_number)) + k)?.name)).length;
+    if (hits > bestHits) { best = k; bestHits = hits; }
+  }
+  if (!best || bestHits < Math.max(3, wrong.length * 0.6)) return 0;
+  // Name for #n comes from the entry k places away.
+  const updates = [...at.entries()].map(([n, e]) => ({ id: e.id, name: at.get(n + best)?.name })).filter((u) => u.name);
+  for (const u of updates) await setCardsOf(profileId).update({ name: u.name }).eq("id", u.id);
+  for (const e of entries) { const u = updates.find((x) => x.id === e.id); if (u) e.name = u.name!; }
+  return best;
 }
 
 type Found = { list: ChecklistEntry[]; url: string; source: string; shared?: boolean; pricedAt?: string | null; incomplete?: boolean };
@@ -407,13 +471,15 @@ export async function buildChecklist(profileId: string, set: SetRow, pasted?: st
   await setsOf(profileId)
     .update({ source: found.source, source_url: found.url || null, total: rows.length, priced_at: pricedAt, tracking: true })
     .eq("id", set.id);
-  const linked = await linkExistingCards(profileId, set);
+  const { linked, corrected, owned: ownedCount } = await linkExistingCards(profileId, { ...set, source: found.source });
   if (pricedAt) await fillMissingValues(profileId, set.id);
   if (!found.shared && found.source === "manual") await saveSharedSet(set.name, found.source, found.url || null, found.list, null, { replaceSmaller: true });
   // Warn when the list still doesn't cover the cards you own (e.g. the page only had part of the set).
   const owned = await ownedNumbers(profileId, set.name);
-  const incomplete = found.source !== "manual" && !plausible(found.list, owned);
-  return { ok: true as const, total: rows.length, linked, source: found.source, shared: !!found.shared, incomplete, owned: owned.size, tried: lastTried };
+  // A list that needed many corrections from your cards is probably wrong overall.
+  const unreliable = corrected > Math.max(3, ownedCount * 0.25);
+  const incomplete = found.source !== "manual" && (!plausible(found.list, owned) || unreliable);
+  return { ok: true as const, total: rows.length, linked, corrected, unreliable, source: found.source, shared: !!found.shared, incomplete, owned: owned.size, tried: lastTried };
 }
 
 const PRICE_PROMPT = `You estimate typical values for every card in a trading card set, for a collector in Australia.

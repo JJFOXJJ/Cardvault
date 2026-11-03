@@ -13,7 +13,7 @@ export type Entry = {
   subset: string | null;
   image: string | null; // official picture (Pokémon)
   est: number | null;   // rough value from the set price lookup
-  card: { id: string; image: string | null; value: number; quantity: number } | null;
+  card: { id: string; image: string | null; value: number; quantity: number; who?: string | null } | null;
 };
 
 type View = "grid" | "list" | "binder";
@@ -22,7 +22,7 @@ type Filter = "all" | "owned" | "missing";
 const PER_PAGE = 9;
 
 type Unlinked = { id: string; name: string; number: string | null; year: string | null };
-export default function SetView({ set, entries, unlinked = [] }: { set: SetRow; entries: Entry[]; unlinked?: Unlinked[] }) {
+export default function SetView({ set, entries, unlinked = [], mismatched = 0 }: { set: SetRow; entries: Entry[]; unlinked?: Unlinked[]; mismatched?: number }) {
   const router = useRouter();
   const [view, setView] = useState<View>("grid");
   const [filter, setFilter] = useState<Filter>("all");
@@ -174,6 +174,17 @@ export default function SetView({ set, entries, unlinked = [] }: { set: SetRow; 
     finally { setBusy(""); }
   }
 
+  async function relink() {
+    const r = await api<{ linked: number; corrected: number; shifted: number; owned: number }>(`/api/sets/${set.id}/relink`, { method: "POST" });
+    const parts = [`${r.linked} of your ${r.owned} cards matched`];
+    if (r.shifted) parts.push("the checklist's names were out of step and have been moved back into place");
+    if (r.corrected) parts.push(`${r.corrected} name${r.corrected === 1 ? "" : "s"} corrected from your scanned cards`);
+    setToast(parts.join(" · ") + ".");
+    if (r.corrected > Math.max(3, r.owned * 0.25)) {
+      setError("Much of this checklist didn't match your scanned cards, so cards you don't own may still have wrong names. Try “Find checklist again” in Set options.");
+    }
+  }
+
   const pct = stats.total ? Math.round((stats.owned / stats.total) * 100) : 0;
 
   // ---- tile
@@ -195,7 +206,7 @@ export default function SetView({ set, entries, unlinked = [] }: { set: SetRow; 
             /* eslint-disable-next-line @next/next/no-img-element */
             <img src={pic} alt="" loading="lazy" draggable={false} />
           ) : own ? (
-            <span className="ck-plain">{e.name}</span>
+            <span className="ck-plain">{e.card?.who || e.name}</span>
           ) : e.image ? (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img src={e.image} alt="" loading="lazy" draggable={false} className="ghost" />
@@ -206,7 +217,7 @@ export default function SetView({ set, entries, unlinked = [] }: { set: SetRow; 
           {(e.card?.quantity ?? 0) > 1 && <span className="ck-qty">×{e.card!.quantity}</span>}
           {e.number && <span className="ck-no">{e.number}</span>}
         </button>
-        {caption && <div className={`ck-cap ${own ? "o" : ""}`}>{e.name}</div>}
+        {caption && <div className={`ck-cap ${own ? "o" : ""}`}>{(own && e.card?.who) || e.name}</div>}
       </div>
     );
   };
@@ -268,6 +279,17 @@ export default function SetView({ set, entries, unlinked = [] }: { set: SetRow; 
       </div>
 
       {error && <p className="error">{error}</p>}
+      {mismatched > 0 && (
+        <div className="merge-hint row">
+          <span style={{ flex: "1 1 220px" }}>
+            <b>{mismatched} card{mismatched === 1 ? " is" : "s are"} in a spot with a different player&apos;s name</b>
+            <span className="muted small"> — the checklist is wrong there. Fix matching re-links your cards and corrects those names from your scanned cards (no search).</span>
+          </span>
+          <button className="btn primary small" disabled={!!busy} onClick={() => action("relink", relink)}>
+            {busy === "relink" ? <span className="spinner" /> : "Fix matching"}
+          </button>
+        </div>
+      )}
       {unlinked.length > 0 && (
         <details className="merge-hint unlinked">
           <summary>
@@ -369,7 +391,7 @@ export default function SetView({ set, entries, unlinked = [] }: { set: SetRow; 
                     </button>
                     <span className="ck-num">{e.number ? `#${e.number}` : ""}</span>
                     {own && e.card ? (
-                      <Link href={`/card/${e.card.id}`} className="ck-name"><b>{e.name}</b>{e.card.quantity > 1 && <span className="ck-qty inline">×{e.card.quantity}</span>}</Link>
+                      <Link href={`/card/${e.card.id}`} className="ck-name"><b>{e.card.who || e.name}</b>{e.card.quantity > 1 && <span className="ck-qty inline">×{e.card.quantity}</span>}</Link>
                     ) : (
                       <span className="ck-name"><b>{e.name}</b></span>
                     )}
@@ -400,12 +422,18 @@ export default function SetView({ set, entries, unlinked = [] }: { set: SetRow; 
               </button>
               <button className="btn small" disabled={!!busy} onClick={() => { if (confirm("Search for this set's checklist again? Your ticked cards stay ticked.")) action("build", async () => {
                   const r = await api<{ total: number; incomplete?: boolean; owned?: number; tried?: { site: string; cards: number; note: string }[] }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ force: true }) });
+                  if (r.incomplete && (r as { unreliable?: boolean }).unreliable) {
+                    throw new Error("The checklist found didn't match most of your scanned cards, so parts of it are probably wrong. Your cards are matched by player where possible; anything that didn't fit is listed under “aren't on this checklist”.");
+                  }
                   if (r.incomplete) {
                     const t = (r.tried ?? []).map((x) => `${x.site} (${x.cards ? `${x.cards} cards, ` : ""}${x.note})`).join(", ");
                     throw new Error(`Found ${r.total} cards, but that doesn't cover the cards you own, so it may still be incomplete.${t ? ` Pages tried: ${t}.` : ""}`);
                   }
                 }, "Checklist refreshed"); }}>
                 {busy === "build" ? <span className="spinner" /> : "Find checklist again"}
+              </button>
+              <button className="btn small" disabled={!!busy} onClick={() => action("relink", relink)}>
+                {busy === "relink" ? <span className="spinner" /> : "Fix matching"}
               </button>
             </div>
             <p className="small muted" style={{ margin: 0 }}>Re-checking set values only fills in estimates — cards that already have a value keep it. To re-value one card, open it and tap “Update value”.</p>

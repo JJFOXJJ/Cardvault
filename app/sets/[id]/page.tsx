@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import Header from "@/components/Header";
 import SetView, { type Entry } from "@/components/SetView";
 import { currentProfile } from "@/lib/auth";
-import { getSet } from "@/lib/checklist";
+import { getSet, samePerson } from "@/lib/checklist";
 import { cardsOf, setCardsOf } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +16,7 @@ export default async function SetPage({ params }: { params: Promise<{ id: string
   const { data: rows } = await setCardsOf(me.id).select("id, number, name, subset, image_url, est_aud").eq("set_id", set.id).order("sort");
   const ids = (rows ?? []).map((r) => r.id);
   const { data: owned } = ids.length
-    ? await cardsOf(me.id).select("id, checklist_id, image_url, photo_url, aud_mid, quantity").in("checklist_id", ids)
+    ? await cardsOf(me.id).select("id, checklist_id, image_url, photo_url, aud_mid, quantity, subject, name").in("checklist_id", ids)
     : { data: [] as Record<string, never>[] };
 
   // One entry can have several cards (duplicates scanned separately): add them up.
@@ -28,6 +28,7 @@ export default async function SetPage({ params }: { params: Promise<{ id: string
       image: prev?.image ?? c.image_url ?? c.photo_url ?? null,
       value: (prev?.value ?? 0) + Number(c.aud_mid ?? 0) * (c.quantity ?? 1),
       quantity: (prev?.quantity ?? 0) + (c.quantity ?? 1),
+      who: prev?.who ?? c.subject ?? null, // your card's own player name, shown on owned tiles
     });
   }
 
@@ -35,6 +36,10 @@ export default async function SetPage({ params }: { params: Promise<{ id: string
   const { data: unlinkedRows } = await cardsOf(me.id).select("id, name, card_number, year")
     .ilike("set_name", set.name.replace(/[%_]/g, "\\$&")).neq("status", "pending").is("checklist_id", null).limit(300);
   const unlinked = (unlinkedRows ?? []).map((c) => ({ id: c.id as string, name: c.name as string, number: c.card_number as string | null, year: c.year as string | null }));
+
+  // Linked cards whose player doesn't match the checklist name at that spot (shown as a warning with "Fix matching").
+  const entryName = new Map((rows ?? []).map((r) => [r.id, r.name as string]));
+  const mismatched = (owned ?? []).filter((c) => (c.subject || c.name) && !samePerson(c.subject || c.name, entryName.get(c.checklist_id))).length;
 
   const entries: Entry[] = (rows ?? []).map((r) => ({
     id: r.id, number: r.number, name: r.name, subset: r.subset, image: r.image_url, est: r.est_aud == null ? null : Number(r.est_aud),
@@ -45,7 +50,7 @@ export default async function SetPage({ params }: { params: Promise<{ id: string
     <>
       <Header />
       <main className="wrap" style={{ maxWidth: 900 }}>
-        <SetView set={set} entries={entries} unlinked={unlinked} />
+        <SetView set={set} entries={entries} unlinked={unlinked} mismatched={mismatched} />
       </main>
     </>
   );

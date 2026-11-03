@@ -165,6 +165,16 @@ export async function saveSharedSetPrices(name: string, values: { number: string
   await db().from("shared_sets").update({ entries, priced_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("key", s.key).then(() => {}, () => {});
 }
 
+/** Fix names in the library's checklist where an owner's scanned card showed the list was wrong. */
+export async function correctSharedSetNames(name: string, fixes: { number: string; name: string }[]) {
+  if (!fixes.length) return;
+  const s = await sharedSet(name).catch(() => null);
+  if (!s || s.source === "manual") return;
+  const byNum = new Map(fixes.map((f) => [normNum(f.number), f.name]));
+  const entries = s.entries.map((e) => (e.number && byNum.has(normNum(e.number)) ? { ...e, name: byNum.get(normNum(e.number))! } : e));
+  await db().from("shared_sets").update({ entries, updated_at: new Date().toISOString() }).eq("key", s.key).then(() => {}, () => {});
+}
+
 /** For the admin page. */
 export async function libraryStats() {
   const count = async (t: string) => {
