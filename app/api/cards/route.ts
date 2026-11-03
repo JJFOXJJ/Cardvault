@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireProfile, jsonError } from "@/lib/auth";
 import { pickEditable, storeImage, cardsOf } from "@/lib/supabase";
+import { keepPicture } from "@/lib/shared";
 
 export const maxDuration = 60;
 
@@ -45,7 +46,8 @@ export async function POST(req: NextRequest) {
     let image_url: string | null = null;
     if (body.imageUrl && !body.useOwnPhoto) {
       try {
-        image_url = await storeImage(body.imageUrl, "official");
+        const f = pickEditable(body) as Record<string, string | null>;
+        image_url = await keepPicture(body.imageUrl, f, body.imageSource);
       } catch (e) {
         return jsonError(`Couldn't save that picture (${e instanceof Error ? e.message : "error"}). Pick another one.`, 422);
       }

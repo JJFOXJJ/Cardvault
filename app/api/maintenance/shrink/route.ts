@@ -6,7 +6,8 @@ export const maxDuration = 60;
 
 const marker = `/storage/v1/object/public/${BUCKET}/`;
 const isOurs = (u: string | null) => !!u && u.includes(marker);
-const needsShrink = (u: string | null) => isOurs(u) && !u!.endsWith(".webp");
+// Shared-library pictures are already small and belong to everyone, so they're left alone.
+const needsShrink = (u: string | null) => isOurs(u) && !u!.endsWith(".webp") && !u!.includes(`${marker}shared/`);
 
 /**
  * Shrink pictures saved before resizing existed (your profile only), a few at a time.

@@ -78,7 +78,8 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   const marker = `/storage/v1/object/public/${BUCKET}/`;
   const paths = [...new Set((rows ?? []).flatMap((r) => [r.image_url, r.photo_url, r.back_photo_url]))]
     .filter((u): u is string => typeof u === "string" && u.includes(marker))
-    .map((u) => u.slice(u.indexOf(marker) + marker.length));
+    .map((u) => u.slice(u.indexOf(marker) + marker.length))
+    .filter((p) => !p.startsWith("shared/")); // shared-library pictures stay for everyone else
   for (let i = 0; i < paths.length; i += 100) await db().storage.from(BUCKET).remove(paths.slice(i, i + 100));
 
   const { error } = await db().from("profiles").delete().eq("id", id); // cards cascade

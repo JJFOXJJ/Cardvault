@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireProfile, jsonError } from "@/lib/auth";
 import { runIdentify } from "@/lib/identify";
-import { photosAsBase64, storeImage, cardsOf } from "@/lib/supabase";
+import { photosAsBase64, cardsOf } from "@/lib/supabase";
+import { keepPicture } from "@/lib/shared";
 import { round } from "@/lib/fx";
 
 export const maxDuration = 150;
@@ -25,7 +26,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     let image_source: string | null = null;
     for (const c of r.candidates.slice(0, 3)) {
       try {
-        image_url = await storeImage(c.url, "official");
+        image_url = await keepPicture(c.url, r.card, c.source);
         image_source = c.source ?? null;
         break;
       } catch {

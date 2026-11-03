@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireProfile, jsonError } from "@/lib/auth";
 import { pickEditable, removeStoredImage, storeImage, cardsOf } from "@/lib/supabase";
+import { isSharedImage } from "@/lib/shared";
 
 export const maxDuration = 60;
 
@@ -25,7 +26,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       update.image_url = current.photo_url;
       update.image_source = null;
     } else if (body.imageUrl) {
-      update.image_url = await storeImage(body.imageUrl, "official");
+      // A library picture is reused as is; anything else is this card's own copy.
+      update.image_url = isSharedImage(body.imageUrl) ? body.imageUrl : await storeImage(body.imageUrl, "official");
       update.image_source = body.imageSource ?? null;
       if (current.image_url !== current.photo_url) await removeStoredImage(current.image_url);
     }

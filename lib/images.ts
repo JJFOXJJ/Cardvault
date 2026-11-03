@@ -5,7 +5,7 @@ export type ImageCandidate = {
   thumb: string;    // safe-to-display preview
   source?: string;  // page it was found on
   title?: string;
-  origin: "pokemontcg" | "brave";
+  origin: "pokemontcg" | "brave" | "web" | "shared";
 };
 
 export type WebResult = { title: string; url: string; description: string; extra?: string[]; age?: string };

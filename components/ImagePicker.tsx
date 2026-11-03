@@ -43,6 +43,7 @@ export default function ImagePicker({ candidates, selected, onSelect, ownPhoto, 
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={c.thumb} alt={c.title ?? "Card image"} loading="lazy" referrerPolicy="no-referrer" />
             {c.origin === "pokemontcg" && <span className="tag">Official</span>}
+            {c.origin === "shared" && <span className="tag" title="Already found by someone — no search used">Library</span>}
           </button>
         ))}
         {ownPhoto && (

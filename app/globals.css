@@ -535,3 +535,8 @@ a:active .art, a:active.set-row, .btn:active { opacity: 0.85; }
 .stack-merge:hover { color: var(--lemon); border-color: var(--lemon); }
 .detail .hero-art { position: relative; }
 .detail .hero-art .qty.big { position: absolute; top: 10px; right: 10px; background: var(--lemon); color: var(--accent-ink); font-family: var(--display); font-weight: 800; font-size: 16px; padding: 3px 12px; border-radius: 999px; }
+
+/* Usage: per-service rows */
+.svc-list { display: grid; gap: 10px; }
+.svc { display: grid; gap: 6px; background: var(--bg-2); border-radius: 10px; padding: 10px 12px; }
+.svc.off { opacity: .6; }

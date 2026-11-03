@@ -1,8 +1,9 @@
 import { identifyCard, type Identification } from "./ai";
-import { braveImages, pokemonImages, type ImageCandidate } from "./images";
+import { pokemonImages, type ImageCandidate } from "./images";
 import { round, usdToAud } from "./fx";
 import { cardsOf } from "./supabase";
-import { braveAllowed } from "./usage";
+import { imageSearch, searchAllowed, searchConfigured } from "./search";
+import { countSaved, pictureKey, sharedPicture } from "./shared";
 
 export type IdentifyResult = {
   card: Identification;
@@ -15,23 +16,33 @@ export type IdentifyResult = {
 
 /** Identify a card from photos, estimate its value and find clean pictures of it. */
 export async function runIdentify(profileId: string, images: { mediaType: string; data: string }[], hint?: string | null): Promise<IdentifyResult> {
-  const searchCapped = !!process.env.BRAVE_SEARCH_API_KEY && !(await braveAllowed());
+  const searchCapped = searchConfigured() && !(await searchAllowed());
   const card = await identifyCard(images, hint ?? undefined, await existingSetNames(profileId), profileId);
 
   let candidates: ImageCandidate[] = [];
   let value = card.value_usd;
 
+  // Someone already found a clean picture of this exact card: offer it first, no search needed.
+  const shared = await sharedPicture(pictureKey(card)).catch(() => null);
+  if (shared) candidates.push({ url: shared, thumb: shared, origin: "shared", title: "From the shared library" });
+
   if (card.is_pokemon && card.subject) {
     const matches = await pokemonImages(card.subject, card.card_number, card.set_name).catch(() => []);
-    candidates = matches;
+    candidates.push(...matches.filter((m) => m.url !== shared));
     // Prefer TCGplayer's market price for an exact Pokémon match when the AI found nothing.
     const exact = matches[0];
     if (!value && exact?.marketUsd) {
       value = { low: exact.marketUsd * 0.8, mid: exact.marketUsd, high: exact.marketUsd * 1.25 };
     }
   }
-  if (candidates.length < 4) {
-    candidates = [...candidates, ...(await braveImages(card.image_query, 8 - candidates.length, profileId).catch(() => []))];
+  // Pictures that came back with the price search (Tavily) are free.
+  const seen = new Set(candidates.map((c) => c.url));
+  for (const im of card.found_images) if (!seen.has(im.url)) { candidates.push(im); seen.add(im.url); }
+
+  if (shared || candidates.filter((c) => c.origin !== "web").length >= 1 || candidates.length >= 3) {
+    if (shared) await countSaved(profileId); // skipped the picture search
+  } else {
+    candidates = [...candidates, ...(await imageSearch(card.image_query, 8 - candidates.length, profileId).catch(() => []))];
   }
 
   const fx = await usdToAud();
@@ -40,7 +51,7 @@ export async function runIdentify(profileId: string, images: { mediaType: string
     aud: value ? { low: round(value.low * fx), mid: round(value.mid * fx), high: round(value.high * fx) } : null,
     fx,
     candidates,
-    imageSearchEnabled: Boolean(process.env.BRAVE_SEARCH_API_KEY),
+    imageSearchEnabled: searchConfigured(),
     searchCapped,
   };
 }

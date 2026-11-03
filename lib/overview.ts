@@ -23,7 +23,8 @@ export async function adminOverview(): Promise<Overview> {
     usageSummary(),
   ]);
 
-  const searchesByName = new Map(usage.brave.byProfile.map((p) => [p.name, p.count]));
+  const searchesByName = new Map<string, number>();
+  for (const p of [...usage.brave.byProfile, ...usage.tavily.byProfile]) searchesByName.set(p.name, (searchesByName.get(p.name) ?? 0) + p.count);
   const rows = new Map<string, ProfileStats & { names: Set<string> }>();
   for (const p of profiles ?? []) {
     rows.set(p.id, { id: p.id, name: p.name, is_admin: p.is_admin, cards: 0, value: 0, waiting: 0, collections: 0, sets: 0, addedWeek: 0,
@@ -48,7 +49,7 @@ export async function adminOverview(): Promise<Overview> {
   const sum = (k: keyof Omit<ProfileStats, "id" | "name" | "is_admin">) => list.reduce((n, r) => n + r[k], 0);
   return {
     totals: { profiles: list.length, cards: sum("cards"), value: Math.round(sum("value") * 100) / 100, waiting: sum("waiting"),
-      collections: sum("collections"), sets: sum("sets"), addedWeek: sum("addedWeek"), searches: usage.brave.used },
+      collections: sum("collections"), sets: sum("sets"), addedWeek: sum("addedWeek"), searches: usage.searches.used },
     profiles: list.sort((a, b) => b.value - a.value),
     usage,
   };

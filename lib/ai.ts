@@ -1,11 +1,13 @@
-// Card identification and pricing using Google Gemini (free tier) + Brave web search.
+// Card identification and pricing using Google Gemini (free tier) + web search (Tavily, then Brave).
 //
 // Flow for a scan:
 //   1. Gemini reads the photo(s) and identifies the card (no web access needed).
-//   2. Brave web search finds pages about recent sales of that exact card.
-//   3. Gemini reads those search snippets and estimates the value.
+//   2. If anyone priced this exact card in the last 30 days, that price is reused (no search).
+//   3. Otherwise a web search finds recent sales of that card, and Gemini estimates the value.
 
-import { braveWeb, type WebResult } from "./images";
+import type { ImageCandidate, WebResult } from "./images";
+import { webSearch } from "./search";
+import { countSaved, priceKey, saveSharedPrice, sharedPrice } from "./shared";
 import { snapToExisting } from "./collections";
 import { recordUsage } from "./usage";
 
@@ -42,9 +44,11 @@ export type Identification = {
   image_query: string;
   price_query: string;
   is_pokemon: boolean;
+  /** Pictures that came back with the price search (Tavily) — saves a separate picture search. */
+  found_images: ImageCandidate[];
 };
 
-export type Valuation = Pick<Identification, "value_usd" | "value_notes" | "price_sources"> & { failed?: boolean };
+export type Valuation = Pick<Identification, "value_usd" | "value_notes" | "price_sources"> & { failed?: boolean; images?: ImageCandidate[] };
 
 const CATEGORIES = "Marvel, Basketball, The Simpsons, Pokémon, Other";
 
@@ -188,10 +192,11 @@ function cleanSources(v: unknown, allowed: WebResult[]): { title: string; url: s
     .map((s) => ({ title: String(s.title || s.url), url: String(s.url) }));
 }
 
-/** Estimate value from Brave search results about the card. */
+/** Estimate value from web search results about the card. */
 export async function priceCard(description: string, query?: string, profileId?: string): Promise<Valuation> {
   const q = query || `${description.split("\n").slice(0, 6).map((l) => l.replace(/^[^:]+:\s*/, "")).join(" ")} sold price`;
-  const results = await braveWeb(q, profileId).catch(() => [] as WebResult[]);
+  const found = await webSearch(q, profileId, { images: true }).catch(() => ({ results: [] as WebResult[], images: [] as ImageCandidate[] }));
+  const results = found.results;
 
   const snippets = results.length
     ? results
@@ -204,13 +209,31 @@ export async function priceCard(description: string, query?: string, profileId?:
     j = await askGemini([{ text: `CARD\n${description}\n\nSEARCH RESULTS\n${snippets}` }], PRICE_PROMPT, 40000, profileId);
   } catch (e) {
     // Don't lose a good identification just because pricing timed out.
-    return { failed: true, value_usd: null, value_notes: `Couldn't estimate a value this time (${e instanceof Error ? e.message : "error"}). Tap "Update value" later.`, price_sources: [] };
+    return { failed: true, value_usd: null, value_notes: `Couldn't estimate a value this time (${e instanceof Error ? e.message : "error"}). Tap "Update value" later.`, price_sources: [], images: found.images };
   }
   return {
     value_usd: cleanValue(j.value_usd),
     value_notes: typeof j.value_notes === "string" ? j.value_notes : "",
     price_sources: cleanSources(j.price_sources, results),
+    images: found.images,
   };
+}
+
+/** Price a card, reusing anyone's price for the same card from the last 30 days. Fresh prices go into the library. */
+export async function priceCardShared(card: Parameters<typeof describeCard>[0], query: string | undefined, profileId?: string, opts: { force?: boolean } = {}): Promise<Valuation & { cached?: boolean }> {
+  const key = priceKey(card);
+  if (!opts.force) {
+    const hit = await sharedPrice(key).catch(() => null);
+    if (hit) {
+      await countSaved(profileId);
+      const days = Math.max(0, Math.round((Date.now() - Date.parse(hit.priced_at)) / 86_400_000));
+      return { value_usd: hit.value_usd, value_notes: `${hit.value_notes} (Shared price from ${days === 0 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`}.)`.trim(),
+        price_sources: hit.price_sources ?? [], images: [], cached: true };
+    }
+  }
+  const v = await priceCard(describeCard(card), query, profileId);
+  if (!v.failed) await saveSharedPrice(key, v);
+  return v;
 }
 
 export async function identifyCard(images: { mediaType: string; data: string }[], hint?: string, existingSets: string[] = [], profileId?: string): Promise<Identification> {
@@ -245,7 +268,7 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
     .filter(Boolean).join(" ");
 
   const price_query = str("price_query") ?? `${fallbackQuery} sold price`;
-  const valuation = await priceCard(describeCard(card), price_query, profileId);
+  const valuation = await priceCardShared(card, price_query, profileId);
 
   return {
     ...card,
@@ -255,6 +278,7 @@ export async function identifyCard(images: { mediaType: string; data: string }[]
     image_query: str("image_query") ?? `${fallbackQuery} card`,
     price_query,
     is_pokemon: Boolean(j.is_pokemon) || /pok[eé]mon/i.test(card.category),
+    found_images: valuation.images ?? [],
   };
 }
 

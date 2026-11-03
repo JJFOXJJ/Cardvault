@@ -38,6 +38,10 @@ To make sure you're never charged, set a **usage limit of $5** in the Brave dash
 
 Without this key the app still works; it uses your photo and Gemini's own knowledge for rough values.
 
+### 3b. Tavily API key (optional, recommended — doubles the free searches)
+Sign up at [app.tavily.com](https://app.tavily.com) (no credit card) and copy the key → `TAVILY_API_KEY`.
+The free plan has 1,000 searches a month. The app uses Tavily first and switches to Brave when Tavily runs out, so together that's about 2,000 free searches a month. With Tavily one search usually returns both prices and pictures, so a scan typically costs 1 search instead of 2.
+
 ### 4. Deploy to Vercel
 1. Push this folder to a new **private** GitHub repo.
 2. In [vercel.com](https://vercel.com) → **Add New → Project** → import the repo (framework is detected automatically).
@@ -50,6 +54,7 @@ Without this key the app still works; it uses your photo and Gemini's own knowle
 | `SUPABASE_SERVICE_ROLE_KEY` | From step 1 |
 | `GEMINI_API_KEY` | From step 2 |
 | `BRAVE_SEARCH_API_KEY` | From step 3 |
+| `TAVILY_API_KEY` | From step 3b (optional) |
 
 4. **Deploy**. Open the URL, enter your PIN, and tap **+ Add card**.
 5. On your phone: Share → **Add to Home Screen** for an app-like icon.
@@ -75,24 +80,35 @@ Each person gets a profile with their own PIN, cards, collections and waiting li
 - **First time after upgrading:** run `supabase/migrations/003_profiles.sql` in the Supabase SQL Editor. The sign-in screen then asks for your name and your current `APP_PIN`; that creates your (admin) profile and moves all existing cards into it.
 - **Adding someone:** tap your name (top right) → **Profiles** → **Add a profile**, with a starting PIN. They pick their name on the sign-in screen and can change their PIN on the same page.
 - Admins can reset PINs, make others admin, and delete a profile (with all its cards). Admins see card counts only, never the cards.
-- Everyone shares the same Gemini and Brave free allowance.
+- Everyone shares the same Gemini, Tavily and Brave free allowance.
 - `APP_PIN` is only used for that first setup.
 
 ## Sets & checklists (tick off cards like a binder)
 Run `supabase/migrations/005_sets.sql` once.
 - After you scan the first card from a new set, the app asks: **track the whole set** or **just this card**. Collections you didn't track are listed on the **Sets** tab with a *Track set* button.
-- Tracking finds the set's checklist: Pokémon from the official database (with pictures and prices); everything else from a checklist web page read by Gemini (1 Brave search). If it can't find one — or gets it wrong — paste your own on the set page (one card per line, e.g. `1 Captain America`).
+- Tracking finds the set's checklist: Pokémon from the official database (with pictures and prices); everything else from a checklist web page read by Gemini (1 search, or none if it's already in the shared library). If it can't find one — or gets it wrong — paste your own on the set page (one card per line, e.g. `1 Captain America`).
 - Set page: **Grid**, **List** or **Binder** view (remembered per device), All/Owned/Missing filter, completion ring, value owned and rough cost to complete. Tap a missing card to tick it; **Tick off cards** mode lets you tap or drag across many.
 - Ticked cards are real cards in your collection and count toward your total.
 - **Pictures for ticked cards:** with *Find pictures when I tick* on (the default, remembered per device), each ticked card gets a picture in the background — 1 image search per card. *Find pictures for N cards* catches up on ticked cards that have none. Your own photos are never replaced; Pokémon cards already come with official pictures. Stops automatically at the monthly search limit.
 - **Values:** one price lookup per set gives every card a rough estimate (1 search). It only fills in cards that have no value — anything you scanned or re-valued keeps its value. Open any card and tap **Update value** for its own price.
 - Unticking a card you scanned with a photo asks first. *Stop tracking* removes the checklist only; your cards stay.
 
+## Shared card library (saves searches)
+Run `supabase/migrations/006_shared_library.sql` once.
+- Anything found **online** is saved once and reused by every profile: set checklists (and the set's price estimates), clean card pictures, and card prices. Your own photos and your cards are never shared.
+- A card someone has already scanned costs no picture search, and no price search if it was priced in the last 30 days. Tracking a set someone already tracks costs nothing.
+- "Update value" always looks again, and refreshes the shared price for everyone.
+- Admin page → **Fill from existing cards** adds everyone's existing online pictures, recent prices and checklists in one go (no searches used).
+
+## Admin overview, backups & keep-awake
+- Profiles → **Admin overview** (admins only): totals for everyone and a per-profile table — numbers only, never anyone's cards.
+- A daily job (`vercel.json` → `/api/cron/daily`, about 4am Sydney) keeps the free Supabase project from pausing and saves a backup of all card details to a private `backups` storage folder (14 days kept). Download or **Back up now** from the admin page. Pictures aren't included. Optional: set `CRON_SECRET` in Vercel so only Vercel can trigger it.
+
 ## Usage meter (shared free allowance)
-Run `supabase/migrations/004_usage.sql` once. The app then counts every Brave search and Gemini request, per profile.
+Run `supabase/migrations/004_usage.sql` once. The app then counts every Tavily and Brave search and Gemini request, per profile.
 - Home, Add card and Profiles show **~scans left this month** with a reset countdown; tap it for the breakdown by profile.
-- **Safety stop:** at 1,000 Brave searches in a calendar month (UTC) the app stops calling Brave until the next month, so the free $5 credit can't be exceeded. Scans keep working using your photo and Gemini's own value estimate.
-- Set `BRAVE_MONTHLY_LIMIT` in Vercel to change the cap (e.g. `900` for a safety margin).
+- **Safety stop:** at 1,000 Brave searches (and 1,000 Tavily searches) in a calendar month (UTC) the app stops calling that service until the next month, so neither free allowance can be exceeded. Scans keep working using the shared library, your photo and Gemini's own value estimate.
+- Set `BRAVE_MONTHLY_LIMIT` / `TAVILY_MONTHLY_LIMIT` in Vercel to change the caps (e.g. `900` for a safety margin). Tavily's own monthly reset may fall on a different day from the calendar month, so a small margin (e.g. `950`) is sensible.
 - Gemini's free limits are daily (reset at midnight US Pacific) and never charge; the page shows today's count and the countdown.
 
 ## How the PIN lock works
@@ -105,7 +121,7 @@ Run `supabase/migrations/004_usage.sql` once. The app then counts every Brave se
 ## Costs
 - **Vercel** Hobby and **Supabase** Free tiers are enough for a personal collection (Supabase free storage is 1 GB ≈ several thousand cards).
 - **Gemini**: free tier, two requests per scan (identify + price). Free-tier rate limits mean very fast back-to-back scanning may pause briefly — the app retries automatically and tells you if you need to wait a minute.
-- **Brave**: two searches per scan, covered by the $5 free monthly credit up to ~500 scans/month. "Update value" uses one search.
+- **Searches**: 0–2 per scan (0 if the card is already in the shared library). Tavily's 1,000 free + Brave's $5 credit (~1,000) a month. "Update value" uses one search.
 
 ## Accuracy notes
 - Values are **estimates for one copy** in near-mint raw condition unless a grade is entered/visible, based on prices in the top web search results for that card and converted from USD at the daily ECB rate. The app shows a low–high range, a confidence badge and the sources it used; you can override the recorded value on any card.

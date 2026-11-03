@@ -3,10 +3,15 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+type ByP = { name: string; count: number }[];
+type Meter = { used: number; limit: number; configured: boolean; byProfile: ByP };
 type Summary = {
   available: boolean;
-  brave: { used: number; limit: number; resetsAt: string; scansLeft: number; byProfile: { name: string; count: number }[] };
-  gemini: { used: number; resetsAt: string; byProfile: { name: string; count: number }[] };
+  searches: { used: number; limit: number; resetsAt: string; scansLeft: number };
+  brave: Meter & { resetsAt: string; scansLeft: number };
+  tavily: Meter;
+  saved: { count: number; byProfile: ByP };
+  gemini: { used: number; resetsAt: string; byProfile: ByP };
 };
 
 let cache: { at: number; p: Promise<Summary | null> } | null = null;
@@ -45,8 +50,8 @@ const level = (used: number, limit: number) => (limit && used >= limit ? "full" 
 /** One-line meter for the home and Add card screens. */
 export function UsageMeter() {
   const u = useUsage();
-  if (!u?.available) return null;
-  const { used, limit, scansLeft, resetsAt } = u.brave;
+  if (!u?.available || !u.searches?.limit) return null;
+  const { used, limit, scansLeft, resetsAt } = u.searches;
   const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
   const lv = level(used, limit);
   return (
@@ -81,11 +86,15 @@ export default function UsagePage() {
     );
   }
 
-  const b = u.brave, g = u.gemini;
-  const pct = b.limit ? Math.min(100, (b.used / b.limit) * 100) : 0;
-  const lv = level(b.used, b.limit);
-  const resetDate = new Date(b.resetsAt).toLocaleString("en-AU", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  const all = u.searches, b = u.brave, t = u.tavily, g = u.gemini;
+  const pct = all.limit ? Math.min(100, (all.used / all.limit) * 100) : 0;
+  const lv = level(all.used, all.limit);
+  const resetDate = new Date(all.resetsAt).toLocaleString("en-AU", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
   const gReset = new Date(g.resetsAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
+  const services = [
+    { name: "Tavily", m: t, note: "used first · 1,000 free a month" },
+    { name: "Brave", m: b, note: "used when Tavily is out · $5 free credit a month" },
+  ];
 
   return (
     <div className="stack">
@@ -96,27 +105,48 @@ export default function UsagePage() {
 
       <section className={`panel stack usage-panel ${lv}`}>
         <div className="row">
-          <h2 style={{ fontSize: 18 }}>Brave searches this month</h2>
+          <h2 style={{ fontSize: 18 }}>Searches this month</h2>
           <span className="spacer" />
-          <b>{b.used} / {b.limit}</b>
+          <b>{all.used} / {all.limit}</b>
         </div>
         <div className="progress big"><i style={{ width: `${pct}%` }} /></div>
         <div className="usage-stats">
-          <div><b>~{b.scansLeft}</b><span>scans left</span></div>
-          <div><b><Countdown to={b.resetsAt} /></b><span>until reset ({resetDate})</span></div>
-          <div><b>${((b.used / 1000) * 5).toFixed(2)}</b><span>of the $5 free credit</span></div>
+          <div><b>~{all.scansLeft}</b><span>scans left (at most)</span></div>
+          <div><b><Countdown to={all.resetsAt} /></b><span>until reset ({resetDate})</span></div>
+          <div><b>{u.saved.count}</b><span>searches saved by the shared library</span></div>
+        </div>
+        <div className="svc-list">
+          {services.map(({ name, m, note }) => (
+            <div key={name} className={`svc ${m.configured ? "" : "off"}`}>
+              <div className="row" style={{ gap: 8 }}>
+                <b>{name}</b>
+                <span className="small muted">{m.configured ? note : "not set up"}</span>
+                <span className="spacer" />
+                {m.configured && <span className="small">{m.used} / {m.limit}</span>}
+              </div>
+              {m.configured && <div className="progress"><i style={{ width: `${m.limit ? Math.min(100, (m.used / m.limit) * 100) : 0}%` }} /></div>}
+            </div>
+          ))}
         </div>
         {lv === "full" ? (
           <p className="error" style={{ margin: 0 }}>
-            The free searches for this month are used up, so the app has stopped using Brave to avoid charges. Scanning still works — it uses your photo and Gemini&apos;s own estimate for the value. Everything switches back on when the month resets.
+            This month&apos;s free searches are used up, so the app has stopped searching to avoid charges. Scanning still works — cards already in the shared library get their picture and price free, others use your photo and Gemini&apos;s own estimate. Everything switches back on when the month resets.
           </p>
         ) : lv === "warn" ? (
           <p className="small" style={{ margin: 0, color: "var(--accent)" }}>Over 80% used. Consider “Save for later” and identifying after the reset.</p>
         ) : null}
         <p className="small muted" style={{ margin: 0 }}>
-          A scan uses about 2 searches (prices + picture). “Update value” and “Search for a different picture” use 1 each.
+          A scan uses 0–2 searches: none if someone already has that card, usually 1 with Tavily (prices and pictures come back together), 2 with Brave. “Update value” and “Search for a different picture” use 1 each.
         </p>
-        {!!b.byProfile.length && <ByProfile rows={b.byProfile} total={b.used} unit="search" />}
+        {!t.configured && (
+          <p className="small" style={{ margin: 0 }}>Tip: add a free Tavily key (TAVILY_API_KEY in Vercel) to roughly double the free searches.</p>
+        )}
+        {(() => {
+          const by = new Map<string, number>();
+          for (const r of [...t.byProfile, ...b.byProfile]) by.set(r.name, (by.get(r.name) ?? 0) + r.count);
+          const rows = [...by.entries()].map(([name, count]) => ({ name, count })).sort((a, z) => z.count - a.count);
+          return rows.length ? <ByProfile rows={rows} total={all.used} unit="search" /> : null;
+        })()}
       </section>
 
       <section className="panel stack">

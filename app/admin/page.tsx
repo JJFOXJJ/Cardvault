@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import Header from "@/components/Header";
 import Backups from "@/components/Backups";
+import Library from "@/components/Library";
 import { UsageMeter } from "@/components/Usage";
 import { currentProfile } from "@/lib/auth";
 import { adminOverview } from "@/lib/overview";
@@ -72,8 +73,10 @@ export default async function AdminPage() {
           </table>
         </section>
         <p className="small muted" style={{ marginTop: -6 }}>
-          Searches are this month&apos;s Brave searches ({o.usage.brave.used}/{o.usage.brave.limit} shared). <Link href="/usage">Usage details →</Link> · <Link href="/profiles">Manage profiles →</Link>
+          Searches are this month&apos;s Tavily + Brave searches ({o.usage.searches.used}/{o.usage.searches.limit} shared). <Link href="/usage">Usage details →</Link> · <Link href="/profiles">Manage profiles →</Link>
         </p>
+
+        <Library saved={o.usage.saved.count} />
 
         <Backups />
       </main>

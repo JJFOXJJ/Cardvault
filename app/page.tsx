@@ -51,6 +51,7 @@ export default async function Home() {
       </main>
       <footer className="credit wrap">
         Values are estimates from online sales, converted to AUD. Search by{" "}
+        <a href="https://tavily.com" target="_blank" rel="noreferrer">Tavily</a> and{" "}
         <a href="https://brave.com/search/api/" target="_blank" rel="noreferrer">Brave Search</a>.
       </footer>
     </>

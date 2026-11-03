@@ -87,7 +87,7 @@ export async function shrink(bytes: ArrayBuffer, type: string, maxSide: number):
 }
 
 /** Download a remote image or decode a data URL, then store it in the bucket. Returns the public URL. */
-export async function storeImage(src: string, folder: "official" | "photos"): Promise<string> {
+export async function storeImage(src: string, folder: "official" | "photos" | "shared"): Promise<string> {
   let bytes: ArrayBuffer;
   let type: string;
 
@@ -120,12 +120,13 @@ export async function storeImage(src: string, folder: "official" | "photos"): Pr
   return db().storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
-/** Remove a stored image if it lives in our bucket. */
+/** Remove a stored image if it lives in our bucket. Shared-library pictures are never removed (others use them). */
 export async function removeStoredImage(publicUrl: string | null) {
   if (!publicUrl) return;
   const marker = `/storage/v1/object/public/${BUCKET}/`;
   const i = publicUrl.indexOf(marker);
   if (i === -1) return;
+  if (publicUrl.slice(i + marker.length).startsWith("shared/")) return;
   await db().storage.from(BUCKET).remove([publicUrl.slice(i + marker.length)]);
 }
 

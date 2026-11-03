@@ -2,10 +2,14 @@
 // estimate values with ONE price lookup per set, and tick cards on/off.
 
 import { askGemini } from "./ai";
-import { braveImages, braveWeb, type WebResult } from "./images";
+import type { WebResult } from "./images";
 import { round, usdToAud } from "./fx";
-import { cardsOf, removeStoredImage, setCardsOf, setsOf, storeImage } from "./supabase";
-import { braveAllowed } from "./usage";
+import { cardsOf, removeStoredImage, setCardsOf, setsOf } from "./supabase";
+import { imageSearch, searchAllowed, webSearch } from "./search";
+import {
+  countSaved, keepPicture, pictureKey, saveSharedSet, saveSharedSetPrices,
+  sharedPictures, sharedSet, sharedSetPrices,
+} from "./shared";
 
 export type ChecklistEntry = { number: string | null; name: string; subset: string | null; image_url?: string | null; est_aud?: number | null };
 export type SetRow = { id: string; name: string; tracking: boolean; source: string | null; source_url: string | null; total: number; priced_at: string | null };
@@ -112,7 +116,7 @@ const PREFERRED = ["cardboardconnection.com", "tcdb.com", "sportscardchecklists.
 
 /** Everything else: find a checklist page (1 search), read it, and have Gemini list the cards. */
 async function webChecklist(setName: string, profileId: string): Promise<{ list: ChecklistEntry[]; url: string } | null> {
-  const results = await braveWeb(`${setName} trading cards complete checklist`, profileId);
+  const { results } = await webSearch(`${setName} trading cards complete checklist`, profileId);
   const rank = (r: WebResult) => {
     const i = PREFERRED.findIndex((d) => r.url.includes(d));
     return (i === -1 ? 50 : i) - (/checklist/i.test(r.title + r.url) ? 20 : 0);
@@ -160,13 +164,23 @@ export async function linkExistingCards(profileId: string, set: SetRow) {
 
 /** Find and store the full checklist for a set. Replaces any previous checklist; owned cards are re-linked. */
 export async function buildChecklist(profileId: string, set: SetRow, pasted?: string) {
-  let found: { list: ChecklistEntry[]; url: string; source: string } | null = null;
+  let found: { list: ChecklistEntry[]; url: string; source: string; shared?: boolean; pricedAt?: string | null } | null = null;
 
   if (pasted?.trim()) {
     const list = parsePasted(pasted);
     if (list.length) found = { list, url: "", source: "manual" };
     else throw new Error("Couldn't read any cards from that text. Put one card per line, like “1 Captain America”.");
   } else {
+    // Someone already found this set's checklist: reuse it (no search, no AI).
+    // (Pokémon sets come from the free official database instead, with every card's picture.)
+    const shared = await sharedSet(set.name).catch(() => null);
+    if (shared && shared.source !== "pokemon") {
+      const prices = sharedSetPrices(shared);
+      found = { list: shared.entries.map((e) => ({ ...e, est_aud: prices ? prices.find(e) : null })), url: shared.source_url ?? "", source: shared.source ?? "web", shared: true, pricedAt: prices?.pricedAt ?? null };
+      await countSaved(profileId, shared.source === "manual" ? 0 : 1);
+    }
+  }
+  if (!found && !pasted?.trim()) {
     const { data: sample } = await cardsOf(profileId).select("category").eq("set_name", set.name).limit(5);
     const looksPokemon = /pok[eé]mon/i.test(set.name) || (sample ?? []).some((r) => /pok[eé]mon/i.test(r.category ?? ""));
     if (looksPokemon) {
@@ -187,12 +201,14 @@ export async function buildChecklist(profileId: string, set: SetRow, pasted?: st
     const { error } = await setCardsOf(profileId).insert(rows.slice(i, i + 500));
     if (error) throw new Error(error.message);
   }
+  const pricedAt = found.pricedAt ?? (found.source === "pokemon" ? new Date().toISOString() : null);
   await setsOf(profileId)
-    .update({ source: found.source, source_url: found.url || null, total: rows.length, priced_at: found.source === "pokemon" ? new Date().toISOString() : null, tracking: true })
+    .update({ source: found.source, source_url: found.url || null, total: rows.length, priced_at: pricedAt, tracking: true })
     .eq("id", set.id);
   const linked = await linkExistingCards(profileId, set);
-  if (found.source === "pokemon") await fillMissingValues(profileId, set.id);
-  return { ok: true as const, total: rows.length, linked, source: found.source };
+  if (pricedAt) await fillMissingValues(profileId, set.id);
+  if (!found.shared && found.source !== "pokemon") await saveSharedSet(set.name, found.source, found.url || null, found.list, null);
+  return { ok: true as const, total: rows.length, linked, source: found.source, shared: !!found.shared };
 }
 
 const PRICE_PROMPT = `You estimate typical values for every card in a trading card set, for a collector in Australia.
@@ -201,12 +217,34 @@ Estimate ONE raw (ungraded) near-mint copy of each card in USD. Use prices from 
 otherwise use your knowledge of this set (commons in older non-sport sets are often $0.25–$2; stars, rookies, holograms and inserts more).
 Be conservative. Return JSON: { "values": [ { "i": <row index from the list>, "usd": number } ] } covering every row.`;
 
-/** ONE price lookup for the whole set. Only fills estimates — never overwrites a value a card already has. */
-export async function priceSet(profileId: string, set: SetRow) {
+/**
+ * ONE price lookup for the whole set — or none, if anyone priced this set in the last 30 days.
+ * Only fills estimates — never overwrites a value a card already has.
+ */
+export async function priceSet(profileId: string, set: SetRow, opts: { force?: boolean } = {}) {
   const { data: entries } = await setCardsOf(profileId).select("id, sort, number, name, subset").eq("set_id", set.id).order("sort");
   if (!entries?.length) return { ok: false as const, priced: 0 };
 
-  const results = await braveWeb(`${set.name} card prices value checklist`, profileId).catch(() => [] as WebResult[]);
+  if (!opts.force) {
+    const prices = sharedSetPrices(await sharedSet(set.name).catch(() => null));
+    if (prices) {
+      let priced = 0;
+      for (const e of entries) {
+        const v = prices.find(e);
+        if (v == null) continue;
+        await setCardsOf(profileId).update({ est_aud: v }).eq("id", e.id);
+        priced++;
+      }
+      if (priced >= entries.length / 2) {
+        await setsOf(profileId).update({ priced_at: prices.pricedAt }).eq("id", set.id);
+        await countSaved(profileId);
+        const filled = await fillMissingValues(profileId, set.id);
+        return { ok: true as const, priced, filled, shared: true };
+      }
+    }
+  }
+
+  const { results } = await webSearch(`${set.name} card prices value checklist`, profileId).catch(() => ({ results: [] as WebResult[] }));
   const snippets = results.slice(0, 8).map((r) => `- ${r.title}: ${[r.description, ...(r.extra ?? [])].join(" … ")}`).join("\n") || "(no results)";
   const listText = entries.map((e, i) => `${i}\t#${e.number ?? "-"}\t${e.name}${e.subset ? `\t[${e.subset}]` : ""}`).join("\n");
   const j = await askGemini([{ text: `SET: ${set.name}\n\nCHECKLIST (index, number, name, [subset]):\n${listText}\n\nSEARCH RESULTS:\n${snippets}` }], PRICE_PROMPT, 55000, profileId);
@@ -214,15 +252,25 @@ export async function priceSet(profileId: string, set: SetRow) {
   const fx = await usdToAud();
   const vals = Array.isArray(j.values) ? (j.values as { i?: unknown; usd?: unknown }[]) : [];
   let priced = 0;
+  const forLibrary: { number: string | null; name: string; est_aud: number }[] = [];
   for (const v of vals) {
     const i = Number(v.i), usd = Number(v.usd);
     if (!Number.isInteger(i) || !entries[i] || !isFinite(usd) || usd < 0) continue;
-    await setCardsOf(profileId).update({ est_aud: round(usd * fx) }).eq("id", entries[i].id);
+    const est = round(usd * fx);
+    await setCardsOf(profileId).update({ est_aud: est }).eq("id", entries[i].id);
+    if (est != null) forLibrary.push({ number: entries[i].number, name: entries[i].name, est_aud: est });
     priced++;
   }
   await setsOf(profileId).update({ priced_at: new Date().toISOString() }).eq("id", set.id);
+  if (priced) {
+    // Sets tracked before the library existed get added to it now.
+    if (set.source && set.source !== "pokemon" && !(await sharedSet(set.name).catch(() => null))) {
+      const est = new Map(forLibrary.map((f) => [`${f.number}|${f.name}`, f.est_aud]));
+      await saveSharedSet(set.name, set.source, set.source_url, entries.map((e) => ({ number: e.number, name: e.name, subset: e.subset, est_aud: est.get(`${e.number}|${e.name}`) ?? null })), new Date().toISOString());
+    } else await saveSharedSetPrices(set.name, forLibrary);
+  }
   const filled = await fillMissingValues(profileId, set.id);
-  return { ok: true as const, priced, filled };
+  return { ok: true as const, priced, filled, shared: false };
 }
 
 /** Owned cards in this set that have NO value yet get the set estimate. Cards with a value are never touched. */
@@ -260,6 +308,9 @@ export async function setOwned(profileId: string, set: SetRow, entryIds: string[
       for (const r of sample ?? []) if (r[k]) counts.set(r[k], (counts.get(r[k]) ?? 0) + 1);
       return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
     };
+    // Pictures someone already found for these cards are free to use.
+    const variantOf = (e: { subset: string | null }) => (/holo|insert|chase|parallel|refractor|foil/i.test(e.subset ?? "") ? e.subset : null);
+    const pics = await sharedPictures((entries ?? []).filter((e) => !e.image_url).map((e) => pictureKey({ set_name: set.name, card_number: e.number, subject: e.name, variant: variantOf(e) }))).catch(() => new Map<string, string>());
     const rows = (entries ?? [])
       .filter((e) => !have.has(e.id))
       .map((e) => ({
@@ -268,11 +319,11 @@ export async function setOwned(profileId: string, set: SetRow, entryIds: string[
         subject: e.name,
         set_name: set.name,
         card_number: e.number,
-        variant: /holo|insert|chase|parallel|refractor|foil/i.test(e.subset ?? "") ? e.subset : null,
+        variant: variantOf(e),
         category: mode("category") ?? "Other",
         manufacturer: mode("manufacturer"),
         year: mode("year"),
-        image_url: e.image_url,
+        image_url: e.image_url ?? pics.get(pictureKey({ set_name: set.name, card_number: e.number, subject: e.name, variant: variantOf(e) }) ?? "") ?? null,
         quantity: 1,
         checklist_id: e.id,
         aud_mid: e.est_aud, aud_low: e.est_aud, aud_high: e.est_aud,
@@ -284,6 +335,8 @@ export async function setOwned(profileId: string, set: SetRow, entryIds: string[
     if (rows.length) {
       const { error } = await cardsOf(profileId).insert(rows);
       if (error) throw new Error(error.message);
+      const fromLibrary = rows.filter((r) => r.image_url && pics.size && [...pics.values()].includes(r.image_url)).length;
+      if (fromLibrary) await countSaved(profileId, fromLibrary);
     }
     return { changed: rows.length };
   }
@@ -308,30 +361,50 @@ export async function getSet(profileId: string, id: string): Promise<SetRow | nu
 }
 
 /**
- * Find a picture for owned cards in this set that don't have one (1 image search per card).
- * Works through at most `max` cards per call so each request stays short; call again for the rest.
+ * Find a picture for owned cards in this set that don't have one.
+ * Library pictures are used first (free); otherwise 1 picture search per card, and what's found goes into the library.
+ * Works through at most `max` searches per call so each request stays short; call again for the rest.
  */
 export async function findPictures(profileId: string, set: SetRow, entryIds?: string[], max = 4) {
-  const { data: entries } = await setCardsOf(profileId).select("id, number, name").eq("set_id", set.id);
+  const { data: entries } = await setCardsOf(profileId).select("id, number, name, subset").eq("set_id", set.id);
   const entry = new Map((entries ?? []).map((e) => [e.id, e]));
   const wanted = entryIds?.length ? entryIds.filter((id) => entry.has(id)) : [...entry.keys()];
   if (!wanted.length) return { done: 0, remaining: 0, capped: false, tried: [] as string[] };
 
-  const { data: owned } = await cardsOf(profileId).select("id, checklist_id, image_url, photo_url").in("checklist_id", wanted.slice(0, 500));
+  const { data: owned } = await cardsOf(profileId).select("id, checklist_id, image_url, photo_url, variant").in("checklist_id", wanted.slice(0, 500));
   const todo = (owned ?? []).filter((c) => !c.image_url && !c.photo_url);
-  let done = 0, capped = false;
+  const keyOf = (c: { checklist_id: string; variant: string | null }) => {
+    const e = entry.get(c.checklist_id)!;
+    return pictureKey({ set_name: set.name, card_number: e.number, subject: e.name, variant: c.variant });
+  };
+  let done = 0, capped = false, searched = 0;
   const tried: string[] = [];
 
-  for (const c of todo.slice(0, max)) {
-    if (!(await braveAllowed())) { capped = true; break; }
+  // 1. Free: pictures already in the shared library.
+  const lib = await sharedPictures(todo.map(keyOf)).catch(() => new Map<string, string>());
+  const rest: typeof todo = [];
+  for (const c of todo) {
+    const url = lib.get(keyOf(c) ?? "");
+    if (url) {
+      await cardsOf(profileId).update({ image_url: url, image_source: null }).eq("id", c.id);
+      tried.push(c.checklist_id);
+      done++;
+    } else rest.push(c);
+  }
+  if (done) await countSaved(profileId, done);
+
+  // 2. Search for the rest.
+  for (const c of rest.slice(0, max)) {
+    if (!(await searchAllowed())) { capped = true; break; }
     tried.push(c.checklist_id);
+    searched++;
     const e = entry.get(c.checklist_id)!;
     const query = `${set.name} ${e.number ? `#${e.number} ` : ""}${e.name} card`;
-    const found = await braveImages(query, 4, profileId).catch(() => []);
+    const found = await imageSearch(query, 4, profileId).catch(() => []);
     for (const cand of found) {
       let url: string | null = null;
       for (const src of [cand.url, cand.thumb]) {
-        try { url = await storeImage(src, "official"); break; } catch { /* try the next source */ }
+        try { url = await keepPicture(src, { set_name: set.name, card_number: e.number, subject: e.name, variant: c.variant }, cand.source); break; } catch { /* try the next source */ }
       }
       if (url) {
         await cardsOf(profileId).update({ image_url: url, image_source: cand.source ?? null }).eq("id", c.id);
@@ -340,6 +413,5 @@ export async function findPictures(profileId: string, set: SetRow, entryIds?: st
       }
     }
   }
-  const processed = Math.min(todo.length, max);
-  return { done, remaining: capped ? todo.length : Math.max(0, todo.length - processed), capped, tried };
+  return { done, remaining: capped ? rest.length : Math.max(0, rest.length - searched), capped, tried };
 }

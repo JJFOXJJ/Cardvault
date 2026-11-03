@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireProfile, jsonError } from "@/lib/auth";
 import { cardsOf } from "@/lib/supabase";
-import { describeCard, priceCard } from "@/lib/ai";
+import { priceCardShared } from "@/lib/ai";
 import { valueColumns } from "@/lib/fx";
 
 export const maxDuration = 120;
@@ -16,7 +16,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!card) return jsonError("Card not found", 404);
 
   try {
-    const v = await priceCard(describeCard(card), undefined, me.id);
+    // "Update value" always looks again (and refreshes the shared price for everyone).
+    const v = await priceCardShared(card, undefined, me.id, { force: true });
     if (v.failed) return jsonError(v.value_notes, 503);
     const update = {
       ...(await valueColumns(v.value_usd)),

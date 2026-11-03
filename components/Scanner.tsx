@@ -290,7 +290,7 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
               </p>
             )}
             {!result.imageSearchEnabled && !candidates.length && (
-              <p className="small muted">Image search isn&apos;t set up (BRAVE_SEARCH_API_KEY), so your photo will be used.</p>
+              <p className="small muted">Picture search isn&apos;t set up (add TAVILY_API_KEY or BRAVE_SEARCH_API_KEY in Vercel), so your photo will be used.</p>
             )}
             {result.imageSearchEnabled && !candidates.length && (
               <p className="small muted">No online picture found — try searching below, or keep your photo.</p>
