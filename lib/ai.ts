@@ -94,7 +94,7 @@ Reply with a JSON object:
 export type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
 /** Ask Gemini for a JSON object (with model fallback, retries and usage counting). */
-export async function askGemini(parts: Part[], system: string, budgetMs = 50000, profileId?: string): Promise<Record<string, unknown>> {
+export async function askGemini(parts: Part[], system: string, budgetMs = 50000, profileId?: string, opts: { maxTokens?: number } = {}): Promise<Record<string, unknown>> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY is not set in Vercel");
 
@@ -118,7 +118,7 @@ export async function askGemini(parts: Part[], system: string, budgetMs = 50000,
           body: JSON.stringify({
             system_instruction: { parts: [{ text: system }] },
             contents: [{ role: "user", parts }],
-            generationConfig: { response_mime_type: "application/json", temperature: 0.2 },
+            generationConfig: { response_mime_type: "application/json", temperature: 0.2, ...(opts.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}) },
           }),
           // One slow model shouldn't use up the whole budget.
           signal: AbortSignal.timeout(Math.min(35000, remaining)),

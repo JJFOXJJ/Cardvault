@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
   const name = req.nextUrl.searchParams.get("name")?.trim();
   if (!name || name.length > 200) return jsonError("Missing set name");
   const search = req.nextUrl.searchParams.get("search") === "1";
+  const force = search && req.nextUrl.searchParams.get("force") === "1"; // ignore the library's copy
 
   const esc = name.replace(/[%_]/g, "\\$&");
   const [{ data: mine }, { data: tracked }] = await Promise.all([
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
   if (search && !(await searchAllowed())) return jsonError("This month's free searches are used up — the checklist can be loaded after the reset.", 429);
   let found;
   try {
-    found = await findChecklist(me.id, name, { search });
+    found = await findChecklist(me.id, name, { search, force });
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Couldn't look up the checklist", 502);
   }

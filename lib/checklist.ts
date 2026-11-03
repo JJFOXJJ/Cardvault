@@ -105,36 +105,68 @@ async function pageText(url: string): Promise<string | null> {
 }
 
 const CHECKLIST_PROMPT = `You extract trading card checklists from web page text.
-Return EVERY card in the named set, in order, as JSON: { "cards": [ { "number": string|null, "name": string, "subset": string|null } ] }
+Return EVERY card in the named set, in order — big sets have hundreds of cards; do not stop early or summarise.
+Use this compact JSON: { "cards": [ [number, name, subset], ... ] } where number is a string or null, name a string, subset a string or null.
 - "number" is the card number exactly as printed (e.g. "1", "57", "H3", "MH1"). Use null only if the set has no numbers.
 - "name" is the player/character/title on that card. Keep it short.
 - "subset" groups cards (e.g. "Super Heroes", "Holograms", "Rookies", "Inserts") when the page shows sections; otherwise null.
 - Include insert/chase cards listed for the set, with their subset.
 - Only use cards that appear in the page text. If the page is not a checklist for this set, return { "cards": [] }.`;
 
-const PREFERRED = ["cardboardconnection.com", "tcdb.com", "sportscardchecklists.com", "beckett.com", "nonsportupdate.com", "scifihobby.com", "trading-card-checklist.com", "cardcollectorcentral.com", "psacard.com"];
+const PREFERRED = ["thehobbytracker.com", "sportscardchecklist.com", "cardboardconnection.com", "tcdb.com", "sportscardchecklists.com", "beckett.com", "nonsportupdate.com", "scifihobby.com", "trading-card-checklist.com", "cardcollectorcentral.com", "psacard.com"];
 
-/** Everything else: find a checklist page (1 search), read it, and have Gemini list the cards. */
-async function webChecklist(setName: string, profileId: string): Promise<{ list: ChecklistEntry[]; url: string } | null> {
+/** Card numbers of the cards you own in this collection — used to spot a checklist that's obviously incomplete. */
+async function ownedNumbers(profileId: string, setName: string): Promise<Set<string>> {
+  const { data } = await cardsOf(profileId).select("card_number").ilike("set_name", setName.replace(/[%_]/g, "\\$&")).neq("status", "pending");
+  return new Set((data ?? []).map((c) => normNum(c.card_number)).filter(Boolean));
+}
+
+/** How well a checklist covers the cards you own (1 = every owned number is on it). */
+function coverage(list: ChecklistEntry[], owned: Set<string>) {
+  if (!owned.size) return 1;
+  const nums = new Set(list.map((e) => normNum(e.number)).filter(Boolean));
+  return [...owned].filter((n) => nums.has(n)).length / owned.size;
+}
+/** Plausible = at least as many cards as you own, and nearly all your card numbers are on it. */
+export const plausible = (list: ChecklistEntry[], owned: Set<string>) =>
+  list.length >= Math.max(8, owned.size) && (owned.size < 3 || coverage(list, owned) >= 0.8);
+
+function parseRows(raw: unknown[]): ChecklistEntry[] {
+  return dedupe(raw.map((x) => {
+    // Compact rows ([number, name, subset]) or objects ({number, name, subset}).
+    const [number, name, subset] = Array.isArray(x) ? x : [(x as Record<string, unknown>)?.number, (x as Record<string, unknown>)?.name, (x as Record<string, unknown>)?.subset];
+    return {
+      number: number == null ? null : String(number).trim() || null,
+      name: typeof name === "string" ? name.trim().slice(0, 120) : "",
+      subset: typeof subset === "string" && subset.trim() ? subset.trim().slice(0, 60) : null,
+    };
+  }).filter((e) => e.name));
+}
+
+/**
+ * Everything else: find checklist pages (1 search), read them, and have Gemini list the cards.
+ * Tries up to 4 pages and keeps the first one that covers the cards you own; otherwise the most complete one.
+ */
+async function webChecklist(setName: string, profileId: string): Promise<{ list: ChecklistEntry[]; url: string; complete: boolean } | null> {
   const { results } = await webSearch(`${setName} trading cards complete checklist`, profileId);
   const rank = (r: WebResult) => {
     const i = PREFERRED.findIndex((d) => r.url.includes(d));
-    return (i === -1 ? 50 : i) - (/checklist/i.test(r.title + r.url) ? 20 : 0);
+    return (i === -1 ? 50 : i) - (/checklist/i.test(r.title + r.url) ? 20 : 0) + (/ebay\./i.test(r.url) ? 100 : 0);
   };
-  const candidates = [...results].sort((a, b) => rank(a) - rank(b)).slice(0, 3);
+  const owned = await ownedNumbers(profileId, setName);
+  const candidates = [...results].sort((a, b) => rank(a) - rank(b)).slice(0, 4);
+  let best: { list: ChecklistEntry[]; url: string; score: number } | null = null;
   for (const c of candidates) {
     const text = await pageText(c.url);
     if (!text || text.length < 100) continue;
-    const j = await askGemini([{ text: `SET: ${setName}\nPAGE: ${c.url}\n\nPAGE TEXT:\n${text.slice(0, 60000)}` }], CHECKLIST_PROMPT, 55000, profileId).catch(() => null);
-    const raw = Array.isArray(j?.cards) ? (j!.cards as Record<string, unknown>[]) : [];
-    const list = dedupe(
-      raw
-        .filter((x) => typeof x?.name === "string")
-        .map((x) => ({ number: x.number == null ? null : String(x.number).trim() || null, name: String(x.name).trim().slice(0, 120), subset: typeof x.subset === "string" && x.subset.trim() ? x.subset.trim().slice(0, 60) : null })),
-    );
-    if (list.length >= 8) return { list: list.slice(0, 1500), url: c.url };
+    const j = await askGemini([{ text: `SET: ${setName}\nPAGE: ${c.url}\n\nPAGE TEXT:\n${text.slice(0, 120000)}` }], CHECKLIST_PROMPT, 55000, profileId, { maxTokens: 60000 }).catch(() => null);
+    const list = parseRows(Array.isArray(j?.cards) ? (j!.cards as unknown[]) : []).slice(0, 2000);
+    if (list.length < 8) continue;
+    if (plausible(list, owned)) return { list, url: c.url, complete: true };
+    const score = coverage(list, owned) * 10000 + list.length;
+    if (!best || score > best.score) best = { list, url: c.url, score };
   }
-  return null;
+  return best ? { list: best.list, url: best.url, complete: false } : null;
 }
 
 // ---------------------------------------------------------------- operations
@@ -162,7 +194,7 @@ export async function linkExistingCards(profileId: string, set: SetRow) {
   return linked;
 }
 
-type Found = { list: ChecklistEntry[]; url: string; source: string; shared?: boolean; pricedAt?: string | null };
+type Found = { list: ChecklistEntry[]; url: string; source: string; shared?: boolean; pricedAt?: string | null; incomplete?: boolean };
 
 async function looksPokemon(profileId: string, setName: string) {
   if (/pok[eé]mon/i.test(setName)) return true;
@@ -182,22 +214,25 @@ async function libraryChecklist(setName: string): Promise<Found | null> {
  * Find a set's checklist: shared library (free) → Pokémon database (free) → web (1 search, only if `search`).
  * A web find is saved to the library, so tracking or previewing it again costs nothing.
  */
-export async function findChecklist(profileId: string, setName: string, opts: { search: boolean }): Promise<(Found & { needsSearch?: false }) | { needsSearch: true } | null> {
-  const lib = await libraryChecklist(setName);
-  if (lib) { await countSaved(profileId, lib.source === "manual" ? 0 : 1); return lib; }
+export async function findChecklist(profileId: string, setName: string, opts: { search: boolean; force?: boolean }): Promise<(Found & { needsSearch?: false }) | { needsSearch: true } | null> {
+  // The library's list is skipped when asked to look again, or when it clearly doesn't cover the cards you own.
+  const lib = opts.force ? null : await libraryChecklist(setName);
+  if (lib && plausible(lib.list, await ownedNumbers(profileId, setName))) { await countSaved(profileId, lib.source === "manual" ? 0 : 1); return lib; }
   if (await looksPokemon(profileId, setName)) {
     const p = await pokemonChecklist(setName);
     if (p) return { ...p, source: "pokemon" };
   }
-  if (!opts.search) return { needsSearch: true };
+  if (!opts.search) return lib ?? { needsSearch: true };
   const w = await webChecklist(setName, profileId);
-  if (!w) return null;
-  await saveSharedSet(setName, "web", w.url || null, w.list, null);
-  return { ...w, source: "web", shared: false };
+  // Keep whichever list is more complete: the new find or the library's.
+  if (!w) return lib;
+  if (lib && lib.list.length >= w.list.length) return lib;
+  await saveSharedSet(setName, "web", w.url || null, w.list, null, { replaceSmaller: true });
+  return { list: w.list, url: w.url, source: "web", shared: false, incomplete: !w.complete };
 }
 
 /** Find and store the full checklist for a set. Replaces any previous checklist; owned cards are re-linked. */
-export async function buildChecklist(profileId: string, set: SetRow, pasted?: string) {
+export async function buildChecklist(profileId: string, set: SetRow, pasted?: string, opts: { force?: boolean } = {}) {
   let found: Found | null = null;
 
   if (pasted?.trim()) {
@@ -205,7 +240,7 @@ export async function buildChecklist(profileId: string, set: SetRow, pasted?: st
     if (list.length) found = { list, url: "", source: "manual" };
     else throw new Error("Couldn't read any cards from that text. Put one card per line, like “1 Captain America”.");
   } else {
-    const f = await findChecklist(profileId, set.name, { search: true });
+    const f = await findChecklist(profileId, set.name, { search: true, force: opts.force });
     if (f && !f.needsSearch) found = f;
   }
   if (!found) return { ok: false as const, total: 0 };
@@ -223,8 +258,11 @@ export async function buildChecklist(profileId: string, set: SetRow, pasted?: st
     .eq("id", set.id);
   const linked = await linkExistingCards(profileId, set);
   if (pricedAt) await fillMissingValues(profileId, set.id);
-  if (!found.shared && found.source === "manual") await saveSharedSet(set.name, found.source, found.url || null, found.list, null);
-  return { ok: true as const, total: rows.length, linked, source: found.source, shared: !!found.shared };
+  if (!found.shared && found.source === "manual") await saveSharedSet(set.name, found.source, found.url || null, found.list, null, { replaceSmaller: true });
+  // Warn when the list still doesn't cover the cards you own (e.g. the page only had part of the set).
+  const owned = await ownedNumbers(profileId, set.name);
+  const incomplete = found.source !== "manual" && !plausible(found.list, owned);
+  return { ok: true as const, total: rows.length, linked, source: found.source, shared: !!found.shared, incomplete, owned: owned.size };
 }
 
 const PRICE_PROMPT = `You estimate typical values for every card in a trading card set, for a collector in Australia.

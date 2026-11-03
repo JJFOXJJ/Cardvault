@@ -21,7 +21,7 @@ type Filter = "all" | "owned" | "missing";
 
 const PER_PAGE = 9;
 
-export default function SetView({ set, entries }: { set: SetRow; entries: Entry[] }) {
+export default function SetView({ set, entries, unlinked = 0 }: { set: SetRow; entries: Entry[]; unlinked?: number }) {
   const router = useRouter();
   const [view, setView] = useState<View>("grid");
   const [filter, setFilter] = useState<Filter>("all");
@@ -267,6 +267,14 @@ export default function SetView({ set, entries }: { set: SetRow; entries: Entry[
       </div>
 
       {error && <p className="error">{error}</p>}
+      {unlinked > 0 && set.source !== "manual" && (
+        <div className="merge-hint row">
+          <span style={{ flex: "1 1 220px" }}>
+            <b>{unlinked} of your cards in this collection aren&apos;t on this checklist</b>
+            <span className="muted small"> — it may be incomplete (only {entries.length} cards). Open <b>Set options</b> below and tap <b>Find checklist again</b>, or paste the full checklist.</span>
+          </span>
+        </div>
+      )}
 
       <div className="set-controls">
         <div className="chips" style={{ margin: 0 }}>
@@ -380,7 +388,10 @@ export default function SetView({ set, entries }: { set: SetRow; entries: Entry[
               <button className="btn small" disabled={!!busy} onClick={() => action("price", () => api(`/api/sets/${set.id}/price`, { method: "POST" }), "Set values updated")}>
                 {busy === "price" ? <span className="spinner" /> : "Re-check set values"}
               </button>
-              <button className="btn small" disabled={!!busy} onClick={() => { if (confirm("Search for this set's checklist again? Your ticked cards stay ticked.")) action("build", () => api(`/api/sets/${set.id}/build`, { method: "POST", body: "{}" }), "Checklist refreshed"); }}>
+              <button className="btn small" disabled={!!busy} onClick={() => { if (confirm("Search for this set's checklist again? Your ticked cards stay ticked.")) action("build", async () => {
+                  const r = await api<{ total: number; incomplete?: boolean; owned?: number }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ force: true }) });
+                  if (r.incomplete) throw new Error(`Found ${r.total} cards, but that still doesn't cover the ${r.owned} you own — the pages found online only list part of this set. Paste the checklist below instead (copy it from a checklist site, one card per line).`);
+                }, "Checklist refreshed"); }}>
                 {busy === "build" ? <span className="spinner" /> : "Find checklist again"}
               </button>
             </div>

@@ -26,10 +26,10 @@ export default function SetPreview({ name }: { name: string }) {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<"all" | "own" | "miss">("all");
 
-  async function load(search: boolean) {
+  async function load(search: boolean, force = false) {
     setLoading(true); setError("");
     try {
-      setD(await api<Data>(`/api/sets/preview?name=${encodeURIComponent(name)}${search ? "&search=1" : ""}`));
+      setD(await api<Data>(`/api/sets/preview?name=${encodeURIComponent(name)}${search ? "&search=1" : ""}${force ? "&force=1" : ""}`));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't load the set");
     } finally {
@@ -87,8 +87,16 @@ export default function SetPreview({ name }: { name: string }) {
           <p className="small muted" style={{ margin: 0 }}>
             From {SOURCE[d.checklist.source] ?? "a checklist"}{d.checklist.shared ? " in the shared library (no search used)" : ""}.
             {d.checklist.url?.startsWith("http") && <> <a href={d.checklist.url} target="_blank" rel="noreferrer">Source ↗</a></>}
-            {!!d.unmatched && <> {d.unmatched} of your cards didn&apos;t match a checklist number.</>}
           </p>
+          {!!d.unmatched && (
+            <div className="merge-hint row">
+              <span style={{ flex: "1 1 220px" }}>
+                <b>{d.unmatched} of your cards aren&apos;t on this checklist</b>
+                <span className="muted small"> — it may only cover part of the set ({entries.length} cards).</span>
+              </span>
+              <button className="btn small" onClick={() => load(true, true)} disabled={loading}>{loading ? <span className="spinner" /> : "Look for a fuller list"}</button>
+            </div>
+          )}
           <nav className="seg" aria-label="Filter">
             {([["all", `All ${entries.length}`], ["own", `Have ${owned}`], ["miss", `Missing ${entries.length - owned}`]] as const).map(([k, label]) => (
               <button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{label}</button>

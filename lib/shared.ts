@@ -123,12 +123,16 @@ export async function sharedSet(name: string): Promise<SharedSet | null> {
   return data as SharedSet;
 }
 
-/** Save a checklist for everyone. A web/Pokémon list replaces a pasted one; otherwise the first one stays. */
-export async function saveSharedSet(name: string, source: string, sourceUrl: string | null, entries: SharedEntry[], pricedAt: string | null) {
+/**
+ * Save a checklist for everyone. The first one stays, except: a web list replaces a pasted one, and with
+ * `replaceSmaller` a clearly more complete list (20%+ more cards) replaces a smaller one.
+ */
+export async function saveSharedSet(name: string, source: string, sourceUrl: string | null, entries: SharedEntry[], pricedAt: string | null, opts: { replaceSmaller?: boolean } = {}) {
   const key = setKey(name);
   if (!key || entries.length < 8) return;
   const existing = await sharedSet(name);
-  if (existing && !(existing.source === "manual" && source !== "manual")) return;
+  const bigger = !!existing && opts.replaceSmaller && entries.length >= Math.ceil(existing.entries.length * 1.2);
+  if (existing && !(existing.source === "manual" && source !== "manual") && !bigger) return;
   await db().from("shared_sets")
     .upsert({ key, name, source, source_url: sourceUrl, entries: entries.map(({ number, name, subset, est_aud }) => ({ number, name, subset, est_aud: est_aud ?? null })),
       total: entries.length, priced_at: pricedAt, updated_at: new Date().toISOString() }, { onConflict: "key" })
