@@ -7,6 +7,7 @@ import type { Card } from "@/lib/supabase";
 import { api, aud } from "@/lib/client";
 import CardFields, { fieldsFrom, toPayload, type Fields } from "./CardFields";
 import ImagePicker, { type Candidate } from "./ImagePicker";
+import ReIdentify from "./ReIdentify";
 
 export default function CardDetail({ card: initial, inSet }: { card: Card; inSet?: { id: string; name: string; number: string | null } | null }) {
   const router = useRouter();
@@ -18,6 +19,7 @@ export default function CardDetail({ card: initial, inSet }: { card: Card; inSet
   const [saved, setSaved] = useState(false);
   const [changingImage, setChangingImage] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [reidentifying, setReidentifying] = useState(false);
 
   const searchQuery = [card.year, card.manufacturer, card.set_name, card.subject || card.name, card.card_number && `#${card.card_number}`, card.variant, "card"]
     .filter(Boolean).join(" ");
@@ -99,6 +101,9 @@ export default function CardDetail({ card: initial, inSet }: { card: Card; inSet
             <button className="btn small" onClick={() => setChangingImage((v) => !v)} disabled={!!busy}>
               {changingImage ? "Cancel" : "Change picture"}
             </button>
+            <button className="btn small" onClick={() => setReidentifying((v) => !v)} disabled={!!busy}>
+              {reidentifying ? "Cancel" : "Re-identify"}
+            </button>
             {card.photo_url && card.photo_url !== card.image_url && (
               <a className="btn ghost small" href={card.photo_url} target="_blank" rel="noreferrer">View my photo</a>
             )}
@@ -106,6 +111,7 @@ export default function CardDetail({ card: initial, inSet }: { card: Card; inSet
               <a className="btn ghost small" href={card.image_source} target="_blank" rel="noreferrer">Image source</a>
             )}
           </div>
+          {reidentifying && <ReIdentify card={card} onClose={() => setReidentifying(false)} />}
           {changingImage && (
             <div className="panel">
               {busy === "image" ? (

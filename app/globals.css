@@ -561,3 +561,17 @@ a:active .art, a:active.set-row, .btn:active { opacity: 0.85; }
 .preview-link { color: inherit; text-decoration: none; }
 .unlinked summary { cursor: pointer; list-style: none; } .unlinked summary::-webkit-details-marker { display: none; } .unlinked { display: block; }
 .set-options { padding: 10px 14px; } .set-options > .btn.ghost { padding: 4px 0; }
+
+/* Re-identify */
+.reid-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.reid-slot { display: grid; gap: 4px; }
+.reid-slot .shot { appearance: none; border: 1.5px dashed var(--line); background: var(--bg-2); border-radius: 10px; aspect-ratio: 5 / 7; padding: 0; overflow: hidden; cursor: pointer; color: var(--muted); font: inherit; position: relative; }
+.reid-slot .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.reid-slot .shot .lbl { display: grid; place-content: center; height: 100%; gap: 4px; font-weight: 700; }
+.reid-slot .shot .lbl small { font-weight: 400; }
+.linkish { appearance: none; border: 0; background: none; color: var(--cyan); font: inherit; padding: 0; cursor: pointer; text-decoration: underline; }
+.reid-diff { width: 100%; border-collapse: collapse; font-size: 13px; }
+.reid-diff th, .reid-diff td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.reid-diff thead th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.reid-diff tbody th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+.reid-diff td b { color: var(--cyan); }
