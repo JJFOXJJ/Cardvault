@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireProfile, jsonError } from "@/lib/auth";
+import { canonicalSetName } from "@/lib/catalog";
 import { pickEditable, storeImage, cardsOf } from "@/lib/supabase";
 import { keepPicture } from "@/lib/shared";
 
@@ -53,9 +54,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const fields = pickEditable(body);
+    if (typeof fields.set_name === "string") fields.set_name = (await canonicalSetName(fields.set_name).catch(() => null)) ?? fields.set_name;
     const { data, error } = await mine
       .insert({
-        ...pickEditable(body),
+        ...fields,
         image_url: image_url ?? photo_url,
         image_source: image_url ? body.imageSource ?? null : null,
         photo_url,

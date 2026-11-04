@@ -66,6 +66,7 @@ export default async function SetsPage() {
       <main className="wrap" style={{ maxWidth: 760 }}>
         <ViewSwitch active="sets" />
         <SetsList sets={summaries} untracked={untracked} unsorted={unsorted} />
+        {me.is_admin && <p className="small" style={{ marginTop: 18 }}><a href="/admin/sets">Admin: manage the approved set list →</a></p>}
       </main>
     </>
   );

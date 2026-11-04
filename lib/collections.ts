@@ -7,6 +7,8 @@ export function setTokens(name: string): string[] {
   return name
     .toLowerCase()
     .replace(/(\d{2,4})\s*[-–/]\s*(\d{2,4})/g, "$1-$2") // "1993 - 94" → "1993-94"
+    .replace(/(^|[^\d])(\d{2})-(\d{2})(?!\d)/g, (_m, pre, a, b) => `${pre}${Number(a) >= 30 ? "19" : "20"}${a}-${b}`) // "93-94" → "1993-94"
+    .replace(/\b((?:19|20)\d{2})-(?:19|20)(\d{2})\b/g, "$1-$2") // "1993-1994" → "1993-94"
     .replace(/[^a-z0-9-]+/g, " ")
     .split(" ")
     .filter((t) => t && !FILLER.has(t));
@@ -14,7 +16,7 @@ export function setTokens(name: string): string[] {
 
 const key = (name: string) => [...setTokens(name)].sort().join(" ");
 
-const years = (name: string) => (name.match(/\b(19|20)\d{2}\b/g) ?? []).map((y) => y.slice(0, 4));
+const years = (name: string) => (setTokens(name).join(" ").match(/\b(19|20)\d{2}/g) ?? []).map((y) => y.slice(0, 4));
 
 /**
  * Are two set names probably the same collection?

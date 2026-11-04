@@ -2,6 +2,7 @@
 // estimate values with ONE price lookup per set, and tick cards on/off.
 
 import { askGemini, geminiReadUrl } from "./ai";
+import { approvedChecklist } from "./catalog";
 import type { WebResult } from "./images";
 import { round, usdToAud } from "./fx";
 import { cardsOf, removeStoredImage, setCardsOf, setsOf } from "./supabase";
@@ -522,8 +523,11 @@ let lastTried: Tried[] = [];
  * Find a set's checklist: shared library (free) → Pokémon database (free) → web (1 search, only if `search`).
  * A web find is saved to the library, so tracking or previewing it again costs nothing.
  */
-export async function findChecklist(profileId: string, setName: string, opts: { search: boolean; force?: boolean }): Promise<(Found & { needsSearch?: false }) | { needsSearch: true } | null> {
+export async function findChecklist(profileId: string, setName: string, opts: { search: boolean; force?: boolean; skipApproved?: boolean }): Promise<(Found & { needsSearch?: false }) | { needsSearch: true } | null> {
   lastTried = [];
+  // The admin-approved checklist always wins (free, and trusted).
+  const approved = opts.skipApproved ? null : await approvedChecklist(setName).catch(() => null);
+  if (approved) return approved;
   // The library's list is skipped when asked to look again, or when it clearly doesn't cover the cards you own.
   const lib = opts.force ? null : await libraryChecklist(setName);
   if (lib && plausible(lib.list, await ownedCards(profileId, setName))) { await countSaved(profileId, lib.source === "manual" ? 0 : 1); return lib; }
@@ -542,10 +546,12 @@ export async function findChecklist(profileId: string, setName: string, opts: { 
 }
 
 /** Find and store the full checklist for a set. Replaces any previous checklist; owned cards are re-linked. */
-export async function buildChecklist(profileId: string, set: SetRow, pasted?: string, opts: { force?: boolean; url?: string } = {}) {
+export async function buildChecklist(profileId: string, set: SetRow, pasted?: string, opts: { force?: boolean; url?: string; preset?: Found } = {}) {
   let found: Found | null = null;
 
-  if (opts.url?.trim()) {
+  if (opts.preset) {
+    found = opts.preset; // e.g. the admin-approved checklist
+  } else if (opts.url?.trim()) {
     const list = await checklistFromUrl(set.name, opts.url, profileId);
     found = { list, url: opts.url.trim(), source: "web" };
     await saveSharedSet(set.name, "web", opts.url.trim(), list, null, { replaceSmaller: true });

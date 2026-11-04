@@ -43,15 +43,15 @@ export function toPayload(f: Fields) {
 }
 
 type Count = { name: string; cards: number };
-type Options = { collections: Count[]; manufacturers: Count[]; categories: Count[] };
+type Options = { collections: Count[]; manufacturers: Count[]; categories: Count[]; approved: string[] };
 
 // Shared across every form on the page; refreshed on each page load.
 let optionsPromise: Promise<Options> | null = null;
 function loadOptions(): Promise<Options> {
   optionsPromise ??= fetch("/api/collections")
     .then((r) => (r.ok ? r.json() : null))
-    .then((d) => ({ collections: d?.collections ?? [], manufacturers: d?.manufacturers ?? [], categories: d?.categories ?? [] }))
-    .catch(() => ({ collections: [], manufacturers: [], categories: [] }));
+    .then((d) => ({ collections: d?.collections ?? [], manufacturers: d?.manufacturers ?? [], categories: d?.categories ?? [], approved: d?.approved ?? [] }))
+    .catch(() => ({ collections: [], manufacturers: [], categories: [], approved: [] }));
   return optionsPromise;
 }
 
@@ -87,10 +87,13 @@ export default function CardFields({
     return () => { live = false; };
   }, []);
 
-  const collections: ComboOption[] = (opts?.collections ?? [])
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((c) => ({ value: c.name, label: `${c.name} (${plural(c.cards)})` }));
+  // Your collections (with counts), plus approved sets you don't have yet — choosing an approved name avoids duplicates.
+  const approved = new Set((opts?.approved ?? []).map((n) => n.toLowerCase()));
+  const yours = (opts?.collections ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const collections: ComboOption[] = [
+    ...yours.map((c) => ({ value: c.name, label: `${c.name} (${plural(c.cards)})${approved.has(c.name.toLowerCase()) ? " ✓" : ""}` })),
+    ...(opts?.approved ?? []).filter((n) => !yours.some((c) => c.name.toLowerCase() === n.toLowerCase())).sort().map((n) => ({ value: n, label: `${n} ✓` })),
+  ];
   const isNewCollection = !!value.set_name.trim() && !!opts && !collections.some((c) => c.value === value.set_name) && value.set_name !== originalSet;
 
   return (

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireProfile, jsonError } from "@/lib/auth";
 import { cardsOf, setsOf } from "@/lib/supabase";
+import { approvedNames } from "@/lib/catalog";
 
 type Count = { name: string; cards: number; value: number };
 
@@ -31,6 +32,7 @@ export async function GET() {
     manufacturers: tally(rows, "manufacturer"),
     categories: tally(rows, "category"),
     unsorted: rows.filter((r) => !(r.set_name as string | null)?.trim()).reduce((n, r) => n + Number(r.quantity ?? 1), 0),
+    approved: await approvedNames().catch(() => [] as string[]),
   });
 }
 

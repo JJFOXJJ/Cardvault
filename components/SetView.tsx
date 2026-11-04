@@ -283,7 +283,7 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
         {showOptions && (
           <div className="stack">
             <p className="small muted" style={{ margin: 0 }}>
-              {set.source === "pokemon" ? "Checklist and prices from the official Pokémon card database." : set.source === "manual" ? "Checklist pasted by you." : set.source === "ai" ? "Checklist from the AI's knowledge of this set — checked against the players you own." : set.source_url ? <>Checklist found at <a href={set.source_url} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>{new URL(set.source_url).hostname}</a> — check it looks right.</> : "Checklist found online."}
+              {set.source === "approved" ? "Approved checklist, maintained by your admin." : set.source === "pokemon" ? "Checklist and prices from the official Pokémon card database." : set.source === "manual" ? "Checklist pasted by you." : set.source === "ai" ? "Checklist from the AI's knowledge of this set — checked against the players you own." : set.source_url ? <>Checklist found at <a href={set.source_url} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>{new URL(set.source_url).hostname}</a> — check it looks right.</> : "Checklist found online."}
               {set.priced_at && ` Values estimated ${new Date(set.priced_at).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}.`}
             </p>
             <div className="row">

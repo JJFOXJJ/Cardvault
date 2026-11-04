@@ -108,6 +108,13 @@ Run `supabase/migrations/007_sharing.sql` once. Then Profiles → **Sharing**.
 - Never shown: notes, the backs of your photos, cards waiting to be identified.
 - **Preview what others see** shows your own view, including your wishlist and spares.
 
+## Approved set list (admins)
+Run `supabase/migrations/008_set_catalog.sql` once. Then Admin overview → **Set list**.
+- Every set name in use, with card and profile counts only (never the cards). New names from scans show as **Pending**.
+- **Possible duplicates** are grouped (same words in any order, "93-94" = "1993-94"). Pick or type the approved name and **Merge**: everyone's cards are filed under it — nothing else on their cards changes. Old spellings become aliases, so future scans and edits snap to the approved name.
+- Approved sets: rename (cards follow), category / year / maker, and the **checklist** — load from a link, find online, or type/paste and edit it. Saving a checklist updates it straight away for everyone tracking the set (cards re-matched by player; ticked cards stay ticked).
+- Scans choose from the approved list, and the collection dropdown shows approved sets (✓).
+
 ## Admin overview, backups & keep-awake
 - Profiles → **Admin overview** (admins only): totals for everyone and a per-profile table — numbers only, never anyone's cards.
 - A daily job (`vercel.json` → `/api/cron/daily`, about 4am Sydney) keeps the free Supabase project from pausing and saves a backup of all card details to a private `backups` storage folder (14 days kept). Download or **Back up now** from the admin page. Pictures aren't included. Optional: set `CRON_SECRET` in Vercel so only Vercel can trigger it.

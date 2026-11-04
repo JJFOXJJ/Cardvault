@@ -5,6 +5,7 @@ import { cardsOf } from "./supabase";
 import { imageSearch, searchAllowed, searchConfigured } from "./search";
 import { countSaved, pictureKey, sharedPicture, sharedSet } from "./shared";
 import { isInsertCard, samePerson } from "./checklist";
+import { approvedNames, canonicalSetName } from "./catalog";
 
 export type IdentifyResult = {
   card: Identification;
@@ -18,7 +19,12 @@ export type IdentifyResult = {
 /** Identify a card from photos, estimate its value and find clean pictures of it. */
 export async function runIdentify(profileId: string, images: { mediaType: string; data: string }[], hint?: string | null): Promise<IdentifyResult> {
   const searchCapped = searchConfigured() && !(await searchAllowed());
-  const card = await identifyCard(images, hint ?? undefined, await existingSetNames(profileId), profileId);
+  // The AI chooses from your collections plus the approved set list, so new duplicates aren't created.
+  const known = [...new Set([...(await approvedNames().catch(() => [])), ...(await existingSetNames(profileId))])];
+  const card = await identifyCard(images, hint ?? undefined, known, profileId);
+  // Another spelling of an approved set → the approved name.
+  const approved = await canonicalSetName(card.set_name).catch(() => null);
+  if (approved) card.set_name = approved;
 
   // The number is usually only on the back. If it wasn't visible, take it from the set's checklist
   // in the shared library — but only when that player has exactly one card in the set.

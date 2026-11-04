@@ -26,6 +26,7 @@ export default async function AdminPage() {
         <div>
           <h1>Admin overview</h1>
           <p className="muted" style={{ margin: "4px 0 0" }}>Totals for everyone. You see numbers only — never anyone else&apos;s cards.</p>
+          <Link href="/admin/sets" className="btn small" style={{ marginTop: 10 }}>Set list — approve &amp; tidy sets →</Link>
         </div>
 
         <section className="worth" style={{ margin: "4px 0 0" }} aria-label="Total value">

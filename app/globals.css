@@ -575,3 +575,16 @@ a:active .art, a:active.set-row, .btn:active { opacity: 0.85; }
 .reid-diff thead th { color: var(--muted); font-weight: 600; font-size: 12px; }
 .reid-diff tbody th { color: var(--muted); font-weight: 600; white-space: nowrap; }
 .reid-diff td b { color: var(--cyan); }
+
+/* Admin: set list */
+.aset { border-bottom: 1px solid var(--line); }
+.aset:last-child { border-bottom: 0; }
+.aset-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; }
+.aset-row .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aset-body { padding: 4px 14px 14px; gap: 10px; }
+.aset-check { background: var(--bg-2); border-radius: 10px; padding: 10px 12px; gap: 8px; }
+.switch-row input[type="radio"] { width: 20px; height: 20px; flex: none; accent-color: var(--cyan); margin: 0; }
+.aset-body, .aset-body > * { min-width: 0; }
+.aset-body .grid-3 > * { min-width: 0; }
+.aset-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; } .aset-tools input { flex: 1 1 200px; width: auto; min-width: 0; }
+.stack { grid-template-columns: minmax(0, 1fr); } /* never let one wide item stretch a page column */

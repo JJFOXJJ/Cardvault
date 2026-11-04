@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireProfile, jsonError } from "@/lib/auth";
+import { canonicalSetName } from "@/lib/catalog";
 import { pickEditable, removeStoredImage, storeImage, cardsOf } from "@/lib/supabase";
 import { isSharedImage } from "@/lib/shared";
 
@@ -19,6 +20,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (!current) return jsonError("Card not found", 404);
 
   const update: Record<string, unknown> = { ...pickEditable(body), updated_at: new Date().toISOString() };
+  // Another spelling of an approved set → the approved name.
+  if (typeof update.set_name === "string") update.set_name = (await canonicalSetName(update.set_name).catch(() => null)) ?? update.set_name;
 
   try {
     if (body.useOwnPhoto && current.photo_url) {
