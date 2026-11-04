@@ -276,6 +276,65 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
         </div>
       </div>
 
+      <section className="panel stack set-options">
+        <button className="row btn ghost" style={{ justifyContent: "space-between", width: "100%" }} onClick={() => setShowOptions((v) => !v)} aria-expanded={showOptions}>
+          <span>Set options</span><span>{showOptions ? "−" : "+"}</span>
+        </button>
+        {showOptions && (
+          <div className="stack">
+            <p className="small muted" style={{ margin: 0 }}>
+              {set.source === "pokemon" ? "Checklist and prices from the official Pokémon card database." : set.source === "manual" ? "Checklist pasted by you." : set.source === "ai" ? "Checklist from the AI's knowledge of this set — checked against the players you own." : set.source_url ? <>Checklist found at <a href={set.source_url} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>{new URL(set.source_url).hostname}</a> — check it looks right.</> : "Checklist found online."}
+              {set.priced_at && ` Values estimated ${new Date(set.priced_at).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}.`}
+            </p>
+            <div className="row">
+              <button className="btn small" disabled={!!busy} onClick={() => action("price", () => api(`/api/sets/${set.id}/price`, { method: "POST" }), "Set values updated")}>
+                {busy === "price" ? <span className="spinner" /> : "Re-check set values"}
+              </button>
+              <button className="btn small" disabled={!!busy} onClick={() => { if (confirm("Search for this set's checklist again? Your ticked cards stay ticked.")) action("build", async () => {
+                  const r = await api<{ total: number; incomplete?: boolean; owned?: number; tried?: { site: string; cards: number; note: string }[] }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ force: true }) });
+                  if (r.incomplete) {
+                    const t = (r.tried ?? []).map((x) => `${x.site} (${x.cards ? `${x.cards} cards, ` : ""}${x.note})`).join(", ");
+                    throw new Error(`Found ${r.total} cards, but that doesn't cover the cards you own, so it may still be incomplete.${t ? ` Pages tried: ${t}.` : ""}`);
+                  }
+                }, "Checklist refreshed"); }}>
+                {busy === "build" ? <span className="spinner" /> : "Find checklist again"}
+              </button>
+              <button className="btn small" disabled={!!busy} onClick={() => action("relink", relink)}>
+                {busy === "relink" ? <span className="spinner" /> : "Fix matching"}
+              </button>
+            </div>
+            <p className="small muted" style={{ margin: 0 }}>Re-checking set values only fills in estimates — cards that already have a value keep it. To re-value one card, open it and tap “Update value”.</p>
+            <div className="field">
+              <span>Use a checklist page</span>
+              <span className="small muted">Paste the link to a page that lists the whole set (e.g. from thehobbytracker.com) — the app reads it.</span>
+              <div className="row">
+                <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" inputMode="url" style={{ flex: 1, width: "auto" }} />
+                <button className="btn small" disabled={!!busy || !/^https?:\/\//.test(link.trim())} onClick={() => action("link", async () => {
+                  const r = await api<{ total: number; linked: number; numbersFixed?: number }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ url: link.trim() }) });
+                  setLink("");
+                  setToast(`Checklist of ${r.total} cards loaded · ${r.linked} of your cards matched${r.numbersFixed ? ` · ${r.numbersFixed} card numbers corrected` : ""}.`);
+                })}>
+                  {busy === "link" ? <span className="spinner" /> : "Use link"}
+                </button>
+              </div>
+            </div>
+            <label className="field">
+              <span>Replace with a pasted checklist</span>
+              <textarea value={paste} onChange={(e) => setPaste(e.target.value)} rows={4} placeholder={"1 Captain America\n2 Captain Britain"} />
+            </label>
+            <div className="row">
+              <button className="btn small" disabled={!!busy || !paste.trim()} onClick={() => action("paste", async () => { await api(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ pasted: paste }) }); setPaste(""); }, "Checklist replaced")}>
+                {busy === "paste" ? <span className="spinner" /> : "Use pasted checklist"}
+              </button>
+              <span className="spacer" />
+              <button className="btn ghost small danger" disabled={!!busy} onClick={() => { if (confirm("Stop tracking this set? Your cards stay in your collection.")) action("stop", async () => { await api(`/api/sets/${set.id}`, { method: "DELETE" }); router.push("/sets"); }); }}>
+                Stop tracking
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
       {error && <p className="error">{error}</p>}
       {mismatched > 0 && (
         <div className="merge-hint row">
@@ -405,64 +464,6 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
         </div>
       )}
 
-      <section className="panel stack" style={{ marginTop: 8 }}>
-        <button className="row btn ghost" style={{ justifyContent: "space-between", width: "100%" }} onClick={() => setShowOptions((v) => !v)} aria-expanded={showOptions}>
-          <span>Set options</span><span>{showOptions ? "−" : "+"}</span>
-        </button>
-        {showOptions && (
-          <div className="stack">
-            <p className="small muted" style={{ margin: 0 }}>
-              {set.source === "pokemon" ? "Checklist and prices from the official Pokémon card database." : set.source === "manual" ? "Checklist pasted by you." : set.source === "ai" ? "Checklist from the AI's knowledge of this set — checked against your cards (same players at the same numbers)." : set.source_url ? <>Checklist found at <a href={set.source_url} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>{new URL(set.source_url).hostname}</a> — check it looks right.</> : "Checklist found online."}
-              {set.priced_at && ` Values estimated ${new Date(set.priced_at).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}.`}
-            </p>
-            <div className="row">
-              <button className="btn small" disabled={!!busy} onClick={() => action("price", () => api(`/api/sets/${set.id}/price`, { method: "POST" }), "Set values updated")}>
-                {busy === "price" ? <span className="spinner" /> : "Re-check set values"}
-              </button>
-              <button className="btn small" disabled={!!busy} onClick={() => { if (confirm("Search for this set's checklist again? Your ticked cards stay ticked.")) action("build", async () => {
-                  const r = await api<{ total: number; incomplete?: boolean; owned?: number; tried?: { site: string; cards: number; note: string }[] }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ force: true }) });
-                  if (r.incomplete) {
-                    const t = (r.tried ?? []).map((x) => `${x.site} (${x.cards ? `${x.cards} cards, ` : ""}${x.note})`).join(", ");
-                    throw new Error(`Found ${r.total} cards, but that doesn't cover the cards you own, so it may still be incomplete.${t ? ` Pages tried: ${t}.` : ""}`);
-                  }
-                }, "Checklist refreshed"); }}>
-                {busy === "build" ? <span className="spinner" /> : "Find checklist again"}
-              </button>
-              <button className="btn small" disabled={!!busy} onClick={() => action("relink", relink)}>
-                {busy === "relink" ? <span className="spinner" /> : "Fix matching"}
-              </button>
-            </div>
-            <p className="small muted" style={{ margin: 0 }}>Re-checking set values only fills in estimates — cards that already have a value keep it. To re-value one card, open it and tap “Update value”.</p>
-            <div className="field">
-              <span>Use a checklist page</span>
-              <span className="small muted">Paste the link to a page that lists the whole set (e.g. from thehobbytracker.com) — the app reads it.</span>
-              <div className="row">
-                <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" inputMode="url" style={{ flex: 1, width: "auto" }} />
-                <button className="btn small" disabled={!!busy || !/^https?:\/\//.test(link.trim())} onClick={() => action("link", async () => {
-                  const r = await api<{ total: number; linked: number; numbersFixed?: number }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ url: link.trim() }) });
-                  setLink("");
-                  setToast(`Checklist of ${r.total} cards loaded · ${r.linked} of your cards matched${r.numbersFixed ? ` · ${r.numbersFixed} card numbers corrected` : ""}.`);
-                })}>
-                  {busy === "link" ? <span className="spinner" /> : "Use link"}
-                </button>
-              </div>
-            </div>
-            <label className="field">
-              <span>Replace with a pasted checklist</span>
-              <textarea value={paste} onChange={(e) => setPaste(e.target.value)} rows={4} placeholder={"1 Captain America\n2 Captain Britain"} />
-            </label>
-            <div className="row">
-              <button className="btn small" disabled={!!busy || !paste.trim()} onClick={() => action("paste", async () => { await api(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ pasted: paste }) }); setPaste(""); }, "Checklist replaced")}>
-                {busy === "paste" ? <span className="spinner" /> : "Use pasted checklist"}
-              </button>
-              <span className="spacer" />
-              <button className="btn ghost small danger" disabled={!!busy} onClick={() => { if (confirm("Stop tracking this set? Your cards stay in your collection.")) action("stop", async () => { await api(`/api/sets/${set.id}`, { method: "DELETE" }); router.push("/sets"); }); }}>
-                Stop tracking
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
 
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
