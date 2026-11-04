@@ -177,6 +177,40 @@ export async function askGemini(parts: Part[], system: string, budgetMs = 50000,
   throw new Error(`Gemini's free models are all busy right now — try again in a few minutes. Tried: ${[...new Set(tried)].join(", ") || lastError}`);
 }
 
+/**
+ * Have Gemini fetch a web page itself (Google's "URL context" tool) and list the cards on it.
+ * Works on many sites that block our server. Returns plain text lines "number | name | subset", or an error note.
+ */
+export async function geminiReadUrl(url: string, setName: string, profileId?: string): Promise<{ text: string | null; note: string }> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { text: null, note: "Gemini key not set" };
+  const prompt = `Open this page: ${url}
+It is a trading card checklist for "${setName}". List EVERY card on the page, in order, one per line, exactly like:
+number | player or card name | subset (blank if none)
+Do not stop early, do not summarise, no other text. If the page can't be opened or has no checklist, reply exactly: NO CHECKLIST`;
+  let last = "";
+  for (let n = 0; n < MODELS.length; n++) {
+    const model = MODELS[(preferred + n) % MODELS.length];
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], tools: [{ url_context: {} }], generationConfig: { temperature: 0, maxOutputTokens: 32000 } }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!res.ok) { last = `${model}: ${res.status}`; continue; }
+      await recordUsage("gemini", profileId);
+      type R = { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] };
+      const text = ((await res.json()) as R).candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "";
+      if (!text.trim() || /^\s*NO CHECKLIST/i.test(text)) return { text: null, note: "Gemini couldn't open the page or found no checklist" };
+      return { text, note: "ok" };
+    } catch (e) {
+      last = `${model}: ${e instanceof Error && e.name === "TimeoutError" ? "timed out" : "error"}`;
+    }
+  }
+  return { text: null, note: `Gemini page reading unavailable (${last})` };
+}
+
 function cleanValue(v: unknown): Range | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;

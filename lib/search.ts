@@ -71,24 +71,28 @@ export async function checklistSearch(query: string, profileId?: string, domains
 }
 
 /** Read one page's text through Tavily (works on sites that block our server). 1 credit per 5 pages. */
-export async function readPage(url: string, profileId?: string): Promise<string | null> {
+export async function readPageWithNote(url: string, profileId?: string): Promise<{ text: string | null; note: string }> {
   const key = process.env.TAVILY_API_KEY?.trim();
-  if (!key || !(await tavilyAllowed())) return null;
+  if (!key) return { text: null, note: "Tavily isn't set up (no TAVILY_API_KEY)" };
+  if (!(await tavilyAllowed())) return { text: null, note: "Tavily's monthly limit is used up" };
   try {
     const res = await fetch("https://api.tavily.com/extract", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ urls: [url], format: "text" }),
-      signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ urls: [url], format: "text", extract_depth: "advanced" }),
+      signal: AbortSignal.timeout(40000),
     });
-    if (res.status !== 401 && res.status !== 403) await recordUsage("tavily", profileId);
-    if (!res.ok) return null;
-    const data = (await res.json().catch(() => ({}))) as { results?: { url?: string; raw_content?: string }[] };
-    return data.results?.[0]?.raw_content ?? null;
-  } catch {
-    return null;
+    if (res.status !== 401 && res.status !== 403) await recordUsage("tavily", profileId, 2);
+    if (!res.ok) return { text: null, note: `Tavily error ${res.status}${res.status === 401 ? " (key rejected)" : ""}` };
+    type R = { results?: { raw_content?: string }[]; failed_results?: { error?: string }[] };
+    const data = (await res.json().catch(() => ({}))) as R;
+    const text = data.results?.[0]?.raw_content ?? null;
+    return text ? { text, note: `Tavily read ${text.length.toLocaleString()} characters` } : { text: null, note: `Tavily couldn't read it${data.failed_results?.[0]?.error ? ` (${data.failed_results[0].error})` : ""}` };
+  } catch (e) {
+    return { text: null, note: `Tavily ${e instanceof Error && e.name === "TimeoutError" ? "timed out" : "failed"}` };
   }
 }
+export const readPage = async (url: string, profileId?: string) => (await readPageWithNote(url, profileId)).text;
 
 /** Pictures of a card. Tavily first; Brave's image search if Tavily finds none. */
 export async function imageSearch(query: string, count = 8, profileId?: string): Promise<ImageCandidate[]> {

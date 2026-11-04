@@ -1,11 +1,11 @@
 // Set checklists: find every card in a set, link the cards you already own,
 // estimate values with ONE price lookup per set, and tick cards on/off.
 
-import { askGemini } from "./ai";
+import { askGemini, geminiReadUrl } from "./ai";
 import type { WebResult } from "./images";
 import { round, usdToAud } from "./fx";
 import { cardsOf, removeStoredImage, setCardsOf, setsOf } from "./supabase";
-import { checklistSearch, imageSearch, readPage, searchAllowed, webSearch } from "./search";
+import { checklistSearch, imageSearch, readPageWithNote, searchAllowed, webSearch } from "./search";
 import {
   countSaved, keepPicture, pictureKey, saveSharedSet, saveSharedSetPrices,
   sharedPictures, sharedSet, sharedSetPrices,
@@ -84,14 +84,24 @@ async function pokemonChecklist(setName: string): Promise<{ list: ChecklistEntry
 
 /** Plain text of a web page, keeping one line per row/list item. */
 async function fetchHtml(url: string): Promise<string | null> {
+  return (await fetchHtmlWithNote(url)).html;
+}
+const BROWSER_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-AU,en;q=0.9",
+};
+async function fetchHtmlWithNote(url: string): Promise<{ html: string | null; note: string }> {
   try {
     const u = new URL(url);
-    if (u.protocol !== "https:") return null;
-    const res = await fetch(u, { headers: { "User-Agent": "Mozilla/5.0 (CardVault checklist)", Accept: "text/html" }, signal: AbortSignal.timeout(12000), redirect: "follow" });
-    if (!res.ok || !(res.headers.get("content-type") ?? "").includes("html")) return null;
-    return (await res.text()).slice(0, 3_000_000);
-  } catch {
-    return null;
+    if (u.protocol !== "https:") return { html: null, note: "not an https link" };
+    const res = await fetch(u, { headers: BROWSER_HEADERS, signal: AbortSignal.timeout(15000), redirect: "follow" });
+    if (!res.ok) return { html: null, note: `site refused (${res.status}${res.status === 403 || res.status === 503 ? ", blocks apps" : ""})` };
+    if (!(res.headers.get("content-type") ?? "").includes("html")) return { html: null, note: "not a web page" };
+    const html = (await res.text()).slice(0, 3_000_000);
+    return { html, note: `read ${Math.round(html.length / 1024)} KB` };
+  } catch (e) {
+    return { html: null, note: e instanceof Error && e.name === "TimeoutError" ? "timed out" : "couldn't connect" };
   }
 }
 
@@ -242,7 +252,10 @@ export function rowsFromText(text: string): ChecklistEntry[] {
   const add = (num: string, name: string) => {
     if (/^(19|20)\d{2}$/.test(num)) return; // a year, not a card number
     // Tidy the name: drop trailing counts/prices ("Larry Johnson 0", "… $1.25") and RC/SP tags.
-    const clean = name.replace(/\s*\|.*$/, "").replace(/(\s+(\$?\d+(\.\d+)?|RC|SP|\(RC\)))+$/i, "").trim().slice(0, 120);
+    let clean = name.replace(/\s*\|.*$/, "").replace(/(\s+(\$?\d+(\.\d+)?|RC|SP|\(RC\)))+$/i, "").trim();
+    const noTeam = clean.replace(/\s+[-–—]\s+[A-Z][^-–—]*$/, ""); // "Larry Johnson - Charlotte Hornets" → "Larry Johnson"
+    if (noTeam !== clean && noTeam.split(" ").length >= 1 && /[A-Za-z]{2}/.test(noTeam)) clean = noTeam;
+    clean = clean.slice(0, 120);
     const k = normNum(num);
     if (!clean || !/[A-Za-z]/.test(clean) || seen.has(k)) return;
     seen.add(k);
@@ -294,26 +307,39 @@ export async function checklistFromUrl(setName: string, url: string, profileId: 
   let u: URL;
   try { u = new URL(url.trim()); } catch { throw new Error("That doesn't look like a web link."); }
   if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("That doesn't look like a web link.");
-  // Read the page ourselves first; if that gives no list (blocked, or built by JavaScript), read it through Tavily.
-  const read = async (text: string | null) => {
+  const notes: string[] = [];
+  const read = async (text: string | null, useAI: boolean) => {
     if (!text || text.length < 100) return [] as ChecklistEntry[];
     const fromText = rowsFromText(text);
-    if (fromText.length >= 50) return fromText;
+    if (fromText.length >= 50 || !useAI) return fromText;
     const fromAI = await rowsFromAI(setName, u.href, text, profileId);
     return fromText.length >= fromAI.length ? fromText : fromAI;
   };
-  const html = await fetchHtml(u.href);
-  let list = html ? rowsFromPageData(html) : [];
-  if (list.length < 20) {
-    const fromPage = await read(html ? htmlToText(html) : null);
-    if (fromPage.length > list.length) list = fromPage;
+  const good = (l: ChecklistEntry[]) => l.length >= 8;
+
+  // 1. Read the page ourselves (embedded data, then the visible list).
+  const direct = await fetchHtmlWithNote(u.href);
+  let list: ChecklistEntry[] = [];
+  if (direct.html) {
+    list = rowsFromPageData(direct.html);
+    if (!good(list)) list = await read(htmlToText(direct.html), true);
+    notes.push(`Direct: ${direct.note}, ${list.length} cards found`);
+  } else notes.push(`Direct: ${direct.note}`);
+
+  // 2. Through Tavily (reads pages that block apps or need a browser).
+  if (!good(list)) {
+    const t = await readPageWithNote(u.href, profileId);
+    if (t.text) list = await read(t.text, true);
+    notes.push(t.text ? `${t.note}, ${list.length} cards found` : t.note);
   }
-  if (list.length < 8) {
-    const viaTavily = await readPage(u.href, profileId);
-    if (!viaTavily && !process.env.TAVILY_API_KEY?.trim()) throw new Error("Couldn't find a checklist on that page — it may need a browser to show it. Adding a Tavily key (TAVILY_API_KEY) lets the app read pages like this.");
-    list = await read(viaTavily);
+  // 3. Gemini opens the page itself.
+  if (!good(list)) {
+    const g = await geminiReadUrl(u.href, setName, profileId);
+    if (g.text) list = rowsFromText(g.text.split("\n").map((l) => (l.includes("|") ? l : l)).join("\n"));
+    notes.push(g.text ? `Gemini read the page, ${list.length} cards found` : g.note);
   }
-  if (list.length < 8) throw new Error("Couldn't find a numbered checklist on that page, even reading it through Tavily. Try another checklist site.");
+  console.log("checklistFromUrl", u.href, notes.join("; "));
+  if (!good(list)) throw new Error(`Couldn't get a checklist from that link. ${notes.join(" · ")}.`);
   return list;
 }
 
