@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import CardFields, { fieldsFrom, toPayload, type Fields } from "@/components/CardFields";
 import ImagePicker, { type Candidate } from "@/components/ImagePicker";
@@ -10,6 +10,9 @@ import { pushAdded } from "@/lib/session-added";
 import JustAdded from "@/components/JustAdded";
 import { UsageMeter } from "@/components/Usage";
 import NewSetPrompt from "@/components/NewSetPrompt";
+import SetPicker, { GUESS } from "@/components/SetPicker";
+
+type Match = { status: string; entry: { number: string | null; name: string; subset: string | null } | null; alternatives: { number: string | null; name: string; subset: string | null }[]; note: string };
 
 type Range = { low: number; mid: number; high: number };
 type IdentifyResult = {
@@ -26,9 +29,11 @@ type IdentifyResult = {
   candidates: Candidate[];
   imageSearchEnabled: boolean;
   searchCapped?: boolean;
+  mode?: "set" | "guess";
+  match?: Match;
 };
 
-export type PendingCard = { id: string; photo_url: string; back_photo_url: string | null; hint: string | null };
+export type PendingCard = { id: string; photo_url: string; back_photo_url: string | null; hint: string | null; set_name?: string | null };
 
 function Shot({ label, hint, value, onPick, locked }: { label: string; hint: string; value: string | null; onPick: (f: File) => void; locked?: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
@@ -42,8 +47,17 @@ function Shot({ label, hint, value, onPick, locked }: { label: string; hint: str
   );
 }
 
-export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pending?: PendingCard | null; waiting?: number }) {
+export default function Scanner({ pending, waiting: initialWaiting = 0, initialSet = null }: { pending?: PendingCard | null; waiting?: number; initialSet?: string | null }) {
   const router = useRouter();
+  // The set comes first: from the set page you came from, the saved card, or the last set you scanned into.
+  const [setName, setSetNameState] = useState<string | null>(initialSet ?? pending?.set_name ?? null);
+  useEffect(() => {
+    if (setName) return;
+    try { const last = localStorage.getItem("cv_scan_set"); if (last) setSetNameState(last); } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const setSetName = (v: string | null) => { setSetNameState(v); try { if (v && v !== GUESS) localStorage.setItem("cv_scan_set", v); } catch { /* ignore */ } };
+  const setBody = () => (setName && setName !== GUESS ? { setName } : { guessSet: true });
   const [front, setFront] = useState<string | null>(pending?.photo_url ?? null);
   const [back, setBack] = useState<string | null>(pending?.back_photo_url ?? null);
   const [hint, setHint] = useState(pending?.hint ?? "");
@@ -86,7 +100,7 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
     try {
       const res = await api<IdentifyResult>("/api/identify", {
         method: "POST",
-        body: JSON.stringify(pending ? { pendingId: pending.id, hint } : { images: [front, back].filter(Boolean), hint }),
+        body: JSON.stringify(pending ? { pendingId: pending.id, hint, ...setBody() } : { images: [front, back].filter(Boolean), hint, ...setBody() }),
       });
       setResult(res);
       setFields(fieldsFrom(res.card as Record<string, unknown>));
@@ -106,7 +120,7 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
     if (!front || pending) return;
     setQueueing("Saving…"); setError(""); setNotice("");
     try {
-      const r = await api<{ waiting: number | null }>("/api/pending", { method: "POST", body: JSON.stringify({ front, back, hint }) });
+      const r = await api<{ waiting: number | null }>("/api/pending", { method: "POST", body: JSON.stringify({ front, back, hint, setName: setName !== GUESS ? setName : undefined }) });
       setWaiting(r.waiting ?? waiting + 1);
       reset();
       setNotice("Saved to your waiting list. Snap the next card.");
@@ -127,7 +141,7 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
     for (const f of list) {
       setQueueing(`Saving ${done + 1} of ${list.length}…`);
       try {
-        const r = await api<{ waiting: number | null }>("/api/pending", { method: "POST", body: JSON.stringify({ front: await fileToDataUrl(f) }) });
+        const r = await api<{ waiting: number | null }>("/api/pending", { method: "POST", body: JSON.stringify({ front: await fileToDataUrl(f), setName: setName !== GUESS ? setName : undefined }) });
         if (r.waiting != null) setWaiting(r.waiting);
         done++;
       } catch (e) {
@@ -220,6 +234,10 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
 
       {stage === "capture" && (
         <div className="stack">
+          <SetPicker value={setName} onChange={setSetName} />
+          {setName === GUESS && (
+            <p className="small" style={{ margin: 0, color: "var(--accent)" }}>Last resort: the AI will name the set itself and can get it wrong. Pick a listed set when you can.</p>
+          )}
           <div className="shots">
             <Shot label="Front" hint="Required" value={front} onPick={pick(setFront)} locked={!!pending} />
             <Shot label="Back" hint="Optional, improves accuracy" value={back} onPick={pick(setBack)} locked={!!pending} />
@@ -230,14 +248,14 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
           </label>
 
           {pending ? (
-            <button className="btn primary block" onClick={identify}>Identify &amp; value card</button>
+            <button className="btn primary block" onClick={identify} disabled={!setName}>{setName ? "Identify & value card" : "Choose the set first"}</button>
           ) : (
             <>
               <div className="btn-row">
                 <button className="btn" onClick={saveForLater} disabled={!front || !!queueing}>
                   {queueing && queueing === "Saving…" ? <><span className="spinner" /> Saving…</> : "Save for later"}
                 </button>
-                <button className="btn primary" onClick={identify} disabled={!front || !!queueing}>Identify now</button>
+                <button className="btn primary" onClick={identify} disabled={!front || !!queueing || !setName}>{setName ? "Identify now" : "Choose the set first"}</button>
               </div>
               <p className="small muted" style={{ margin: 0, textAlign: "center" }}>
                 &ldquo;Save for later&rdquo; stores the photos straight away so nothing&apos;s lost — identify them whenever you like.
@@ -250,7 +268,7 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
                 ) : (
                   <>
                     <b style={{ color: "var(--text)" }}>Upload several photos</b>
-                    <div className="small">Pick a batch from your camera roll — one card per photo. They go to your waiting list.</div>
+                    <div className="small">Pick a batch from your camera roll — one card per photo. They go to your waiting list{setName && setName !== GUESS ? <> for <b>{setName}</b></> : ""}.</div>
                   </>
                 )}
                 <input ref={manyRef} type="file" accept="image/*" multiple onChange={(e) => { if (e.target.files) uploadMany(e.target.files); e.target.value = ""; }} />
@@ -271,13 +289,32 @@ export default function Scanner({ pending, waiting: initialWaiting = 0 }: { pend
           <span className="spinner big" />
           <div>
             <b>Identifying your card…</b>
-            <p className="muted small" style={{ margin: "4px 0 0" }}>Reading the photo, checking recent sales and finding a clean picture. Usually 10–30 seconds.</p>
+            <p className="muted small" style={{ margin: "4px 0 0" }}>{setName && setName !== GUESS ? `Reading the card number and name, and matching it to the ${setName} checklist.` : "Reading the photo (the AI is guessing the set — last resort)."} Usually 10–30 seconds.</p>
           </div>
         </div>
       )}
 
       {stage === "review" && result && fields && (
         <div className="stack">
+          {result.mode === "guess" ? (
+            <div className="match-banner check">
+              <span><b>Set guessed by the AI (last resort):</b> {String(result.card.set_name ?? "unknown")}. Check it below — a new set name shows up for your admin to approve or merge.</span>
+            </div>
+          ) : result.match ? (
+            <div className={`match-banner ${result.match.status === "exact" || result.match.status === "number" || result.match.status === "name" ? "good" : "check"}`}>
+              <span>{result.match.status === "exact" ? "✓ " : ""}{result.match.note}</span>
+              {result.match.alternatives.length > 1 && (
+                <div className="alts">
+                  <span className="small muted">Choose:</span>
+                  {result.match.alternatives.map((a) => (
+                    <button key={`${a.number}-${a.name}`} className={`chip ${fields.card_number === (a.number ?? "") ? "on" : ""}`} onClick={() => setFields({ ...fields, card_number: a.number ?? "", name: `${a.name}${a.number ? ` #${a.number}` : ""}`, subject: a.name })}>
+                      #{a.number} {a.name}{a.subset ? ` · ${a.subset}` : ""}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
           <section className="panel stack">
             <div className="row">
               <h2 style={{ fontSize: 18 }}>Choose the picture</h2>

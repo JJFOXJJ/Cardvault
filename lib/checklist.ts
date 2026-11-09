@@ -19,7 +19,7 @@ export type SetRow = { id: string; name: string; tracking: boolean; source: stri
 
 export const normNum = (n: string | null | undefined) =>
   (n ?? "").toString().trim().toLowerCase().replace(/^#/, "").replace(/^0+(?=\d)/, "").replace(/\s+/g, "");
-const normName = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/#\s*\S+/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+export const normName = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/#\s*\S+/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 
 function numericSort(a: ChecklistEntry, b: ChecklistEntry) {
   const pa = /^\d+$/.test(normNum(a.number)), pb = /^\d+$/.test(normNum(b.number));
@@ -511,9 +511,9 @@ async function looksPokemon(profileId: string, setName: string) {
 /** The shared library's checklist for this set, if anyone found it already (free). Pokémon is left to the official database. */
 async function libraryChecklist(setName: string): Promise<Found | null> {
   const shared = await sharedSet(setName).catch(() => null);
-  if (!shared || shared.source === "pokemon") return null;
+  if (!shared) return null;
   const prices = sharedSetPrices(shared);
-  return { list: shared.entries.map((e) => ({ ...e, est_aud: prices ? prices.find(e) : null })), url: shared.source_url ?? "", source: shared.source ?? "web", shared: true, pricedAt: prices?.pricedAt ?? null };
+  return { list: shared.entries.map((e) => ({ ...e, est_aud: prices ? prices.find(e) : e.est_aud ?? null })), url: shared.source_url ?? "", source: shared.source ?? "web", shared: true, pricedAt: prices?.pricedAt ?? null };
 }
 
 /** What the last web lookup tried (shown to the owner when a checklist can't be completed). */
@@ -522,6 +522,10 @@ let lastTried: Tried[] = [];
 /**
  * Find a set's checklist: shared library (free) → Pokémon database (free) → web (1 search, only if `search`).
  * A web find is saved to the library, so tracking or previewing it again costs nothing.
+ */
+/**
+ * Find a set's checklist, free sources first: approved list → shared library → Pokémon database.
+ * Searching the web (`search: true`) is the LAST RESORT — only when the owner asks for it.
  */
 export async function findChecklist(profileId: string, setName: string, opts: { search: boolean; force?: boolean; skipApproved?: boolean }): Promise<(Found & { needsSearch?: false }) | { needsSearch: true } | null> {
   lastTried = [];
@@ -546,7 +550,7 @@ export async function findChecklist(profileId: string, setName: string, opts: { 
 }
 
 /** Find and store the full checklist for a set. Replaces any previous checklist; owned cards are re-linked. */
-export async function buildChecklist(profileId: string, set: SetRow, pasted?: string, opts: { force?: boolean; url?: string; preset?: Found } = {}) {
+export async function buildChecklist(profileId: string, set: SetRow, pasted?: string, opts: { force?: boolean; url?: string; preset?: Found; lastResort?: boolean } = {}) {
   let found: Found | null = null;
 
   if (opts.preset) {
@@ -560,7 +564,8 @@ export async function buildChecklist(profileId: string, set: SetRow, pasted?: st
     if (list.length) found = { list, url: "", source: "manual" };
     else throw new Error("Couldn't read any cards from that text. Put one card per line, like “1 Captain America”.");
   } else {
-    const f = await findChecklist(profileId, set.name, { search: true, force: opts.force });
+    // Web search only when the owner chose the last-resort option.
+    const f = await findChecklist(profileId, set.name, { search: !!opts.lastResort, force: opts.force });
     if (f && !f.needsSearch) found = f;
   }
   if (!found) return { ok: false as const, total: 0, tried: lastTried };

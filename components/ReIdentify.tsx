@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import type { Card } from "@/lib/supabase";
 import { api, aud, fileToDataUrl } from "@/lib/client";
 import ImagePicker, { type Candidate } from "./ImagePicker";
+import SetPicker, { GUESS } from "./SetPicker";
 
 type Result = {
   card: Record<string, unknown> & { name: string; confidence: string; value_notes?: string };
@@ -11,6 +12,7 @@ type Result = {
   fx: number;
   candidates: Candidate[];
   searchCapped?: boolean;
+  match?: { status: string; note: string };
 };
 
 const FIELDS: [keyof Card, string][] = [
@@ -39,6 +41,7 @@ export default function ReIdentify({ card, onClose }: { card: Card; onClose: () 
   const [front, setFront] = useState<string | null>(null);
   const [back, setBack] = useState<string | null>(null);
   const [hint, setHint] = useState("");
+  const [setName, setSetName] = useState<string | null>(card.set_name ?? null);
   const [busy, setBusy] = useState<"" | "identify" | "apply">("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
@@ -53,7 +56,7 @@ export default function ReIdentify({ card, onClose }: { card: Card; onClose: () 
   async function identify() {
     setBusy("identify"); setError(""); setResult(null);
     try {
-      const r = await api<Result>(`/api/cards/${card.id}/reidentify`, { method: "POST", body: JSON.stringify({ step: "identify", front: front ?? undefined, back: back ?? undefined, hint }) });
+      const r = await api<Result>(`/api/cards/${card.id}/reidentify`, { method: "POST", body: JSON.stringify({ step: "identify", front: front ?? undefined, back: back ?? undefined, hint, ...(setName && setName !== GUESS ? { setName } : { guessSet: true }) }) });
       setResult(r);
       setCandidates(r.candidates);
       setPicture(r.candidates[0] && (card.image_url === card.photo_url || !card.image_url) ? r.candidates[0] : "keep");
@@ -96,13 +99,14 @@ export default function ReIdentify({ card, onClose }: { card: Card; onClose: () 
         Uses your saved photos, or add new ones. <b>Add the back</b> if the card number is printed there — it&apos;s the best way to get the number right.
         Nothing changes until you tap <b>Use these details</b>.
       </p>
+      <SetPicker value={setName} onChange={setSetName} />
       <div className="reid-slots">
         <Slot label="Front" current={card.photo_url} value={front} onPick={pick(setFront)} onClear={() => setFront(null)} />
         <Slot label="Back" current={card.back_photo_url} value={back} onPick={pick(setBack)} onClear={() => setBack(null)} />
       </div>
       <input value={hint} onChange={(e) => setHint(e.target.value)} placeholder="Optional hint, e.g. “1993-94 SkyBox Premium, Series 2”" />
       {error && <p className="error" style={{ margin: 0 }}>{error}</p>}
-      <button className="btn primary" onClick={identify} disabled={!!busy || (!front && !card.photo_url)}>
+      <button className="btn primary" onClick={identify} disabled={!!busy || (!front && !card.photo_url) || !setName}>
         {busy === "identify" ? <><span className="spinner" /> Identifying… (15–40 seconds)</> : result ? "Identify again" : "Identify"}
       </button>
 
@@ -113,6 +117,7 @@ export default function ReIdentify({ card, onClose }: { card: Card; onClose: () 
             <span className="spacer" />
             <span className={`badge ${result.card.confidence}`}>{result.card.confidence} confidence</span>
           </div>
+          {result.match && <p className="small" style={{ margin: 0 }}>{result.match.note}</p>}
           {changed.length ? (
             <table className="reid-diff">
               <thead><tr><th></th><th>Now</th><th>New</th></tr></thead>

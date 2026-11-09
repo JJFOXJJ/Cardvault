@@ -327,6 +327,47 @@ function pickCollection(picked: string | null, suggested: string | null, existin
   return snapToExisting(suggested, existing);
 }
 
+export type CardReading = {
+  number: string | null; name: string | null; insert: string | null; graded: string | null;
+  confidence: "high" | "medium" | "low"; other_set: boolean; is_pokemon: boolean;
+};
+
+const READ_PROMPT = `You read trading cards for a collector who has already chosen which set the card is from.
+Read ONLY what is printed on the card. Do not identify, name or guess the set.
+
+Reply with a JSON object with exactly these keys:
+{
+  "number": the card number exactly as printed (e.g. "192", "57", "TL3", "FS1", "23/102"), or null if no number is visible.
+            It is often only on the back — if you can't see it, use null. Never guess a number from memory.,
+  "name": the player / character / card title printed on the card (e.g. "Craig Ehlo", "Charizard"), or null if unreadable,
+  "insert": the insert or parallel subset name printed on the card (e.g. "Thunder and Lightning", "SkySlams", "Holo"), or null for a regular base card,
+  "graded": the grading slab label (company + grade, e.g. "PSA 9") or null,
+  "confidence": "high" | "medium" | "low" — how sure you are of the number and name you read,
+  "other_set": true ONLY if the card clearly shows a different year or brand from the chosen set, otherwise false,
+  "is_pokemon": boolean
+}`;
+
+/** Set-first scanning: read the card number and name only. The set comes from the owner, never from the AI. */
+export async function readCard(images: { mediaType: string; data: string }[], setName: string, hint?: string, profileId?: string): Promise<CardReading> {
+  const parts: Part[] = images.map((img) => ({ inline_data: { mime_type: img.mediaType, data: img.data } }));
+  parts.push({
+    text: (images.length > 1 ? "The first photo is the front of the card, the second is the back. " : "Only the front was photographed. ") +
+      `The owner says this card is from the set "${setName}". Read the number and name.` +
+      (hint?.trim() ? `\n\nThe owner adds this hint (trust it): ${hint.trim()}` : ""),
+  });
+  const j = await askGemini(parts, READ_PROMPT, 45000, profileId);
+  const str = (k: string) => (typeof j[k] === "string" && (j[k] as string).trim() && !/^(null|none|n\/a|unknown)$/i.test((j[k] as string).trim()) ? (j[k] as string).trim().slice(0, 120) : null);
+  return {
+    number: str("number")?.replace(/^#\s*/, "") ?? null,
+    name: str("name"),
+    insert: str("insert"),
+    graded: str("graded"),
+    confidence: (["high", "medium", "low"].includes(j.confidence as string) ? j.confidence : "low") as CardReading["confidence"],
+    other_set: j.other_set === true,
+    is_pokemon: j.is_pokemon === true,
+  };
+}
+
 export function describeCard(c: {
   name?: string | null; subject?: string | null; year?: string | null; manufacturer?: string | null;
   set_name?: string | null; card_number?: string | null; variant?: string | null; graded?: string | null;

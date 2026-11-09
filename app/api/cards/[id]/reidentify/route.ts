@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jsonError, requireProfile } from "@/lib/auth";
 import { runIdentify } from "@/lib/identify";
+import { runIdentifyInSet } from "@/lib/scan";
 import { cardsOf, photosAsBase64, removeStoredImage, setsOf, storeImage } from "@/lib/supabase";
 import { keepPicture } from "@/lib/shared";
 import { getSet, linkExistingCards } from "@/lib/checklist";
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   if (!card) return jsonError("Card not found", 404);
 
   type Body = {
-    step?: "identify" | "apply"; front?: string; back?: string; hint?: string;
+    step?: "identify" | "apply"; front?: string; back?: string; hint?: string; setName?: string; guessSet?: boolean;
     result?: Record<string, unknown> & { aud?: { low: number | null; mid: number | null; high: number | null } | null; fx?: number };
     picture?: { url: string; source?: string | null } | "keep" | "own";
     updateValue?: boolean;
@@ -45,7 +46,10 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       const back = b.back ? toImage(b.back) : await saved(card.back_photo_url);
       const images = (front ? [front, back] : []).filter(Boolean) as { mediaType: string; data: string }[]; // the front must come first
       if (!images.length) return jsonError("This card has no saved photo — add a photo of the front.");
-      return NextResponse.json(await runIdentify(me.id, images, b.hint?.trim() || card.hint));
+      const setName = (b.setName ?? card.set_name ?? "").trim();
+      return NextResponse.json(setName && !b.guessSet
+        ? await runIdentifyInSet(me.id, images, setName, b.hint?.trim() || card.hint)
+        : await runIdentify(me.id, images, b.hint?.trim() || card.hint));
     } catch (e) {
       return jsonError(e instanceof Error ? e.message : "Identification failed", 502);
     }

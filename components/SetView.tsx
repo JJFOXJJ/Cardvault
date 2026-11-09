@@ -228,13 +228,26 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
         {error && <p className="error">{error}</p>}
         <section className="panel stack">
           <b>No checklist yet</b>
-          <p className="small muted" style={{ margin: 0 }}>Search online for this set&apos;s checklist, or paste one yourself (one card per line, like “1 Captain America”).</p>
-          <button className="btn primary" onClick={() => action("build", async () => {
+          <p className="small muted" style={{ margin: 0 }}>
+            Checklists come from the approved set list. An admin can add this set under <b>Admin → Add a set</b> (Pokémon sets load straight from the official database;
+            others from a checklist link or CSV). You can also paste one yourself below.
+          </p>
+          <button className="btn small" onClick={() => action("build", async () => {
             await api(`/api/sets/${set.id}/build`, { method: "POST", body: "{}" });
             await api(`/api/sets/${set.id}/price`, { method: "POST" }).catch(() => null);
-          }, "Checklist found")} disabled={!!busy}>
-            {busy === "build" ? <><span className="spinner" /> Finding the checklist…</> : "Find the checklist online"}
+          }, "Checklist found")} disabled={!!busy} style={{ justifySelf: "start" }}>
+            {busy === "build" ? <><span className="spinner" /> Checking…</> : "Check the approved list again"}
           </button>
+          <details className="last-resort">
+            <summary>Last resort: search the web for this checklist</summary>
+            <p className="small muted" style={{ margin: "6px 0" }}>Uses up to 2 searches and reads whatever pages it finds — results can be incomplete or wrong. Prefer an admin-added checklist.</p>
+            <button className="btn ghost small" onClick={() => action("web", async () => {
+              await api(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ lastResort: true }) });
+              await api(`/api/sets/${set.id}/price`, { method: "POST" }).catch(() => null);
+            }, "Checklist found (from the web — check it)")} disabled={!!busy}>
+              {busy === "web" ? <><span className="spinner" /> Searching the web…</> : "Search the web (last resort)"}
+            </button>
+          </details>
           <textarea value={paste} onChange={(e) => setPaste(e.target.value)} rows={6} placeholder={"1 Captain America\n2 Captain Britain\n3 Captain Marvel"} />
           <button className="btn" disabled={!!busy || !paste.trim()} onClick={() => action("paste", async () => {
             await api(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ pasted: paste }) });
@@ -276,6 +289,7 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
         </div>
       </div>
 
+      <a href={`/add?set=${encodeURIComponent(set.name)}`} className="btn primary small" style={{ justifySelf: "start" }}>📷 Scan cards into this set</a>
       <section className="panel stack set-options">
         <button className="row btn ghost" style={{ justifyContent: "space-between", width: "100%" }} onClick={() => setShowOptions((v) => !v)} aria-expanded={showOptions}>
           <span>Set options</span><span>{showOptions ? "−" : "+"}</span>
@@ -290,14 +304,19 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
               <button className="btn small" disabled={!!busy} onClick={() => action("price", () => api(`/api/sets/${set.id}/price`, { method: "POST" }), "Set values updated")}>
                 {busy === "price" ? <span className="spinner" /> : "Re-check set values"}
               </button>
-              <button className="btn small" disabled={!!busy} onClick={() => { if (confirm("Search for this set's checklist again? Your ticked cards stay ticked.")) action("build", async () => {
-                  const r = await api<{ total: number; incomplete?: boolean; owned?: number; tried?: { site: string; cards: number; note: string }[] }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ force: true }) });
+              <button className="btn small" disabled={!!busy} onClick={() => action("approved", async () => {
+                  await api(`/api/sets/${set.id}/build`, { method: "POST", body: "{}" });
+                }, "Checklist refreshed from the approved list")}>
+                {busy === "approved" ? <span className="spinner" /> : "Refresh from approved list"}
+              </button>
+              <button className="btn ghost small" title="Last resort — uses up to 2 searches; results can be wrong" disabled={!!busy} onClick={() => { if (confirm("Last resort: search the web for this checklist? It uses up to 2 searches and results can be incomplete or wrong. Your ticked cards stay ticked.")) action("build", async () => {
+                  const r = await api<{ total: number; incomplete?: boolean; owned?: number; tried?: { site: string; cards: number; note: string }[] }>(`/api/sets/${set.id}/build`, { method: "POST", body: JSON.stringify({ force: true, lastResort: true }) });
                   if (r.incomplete) {
                     const t = (r.tried ?? []).map((x) => `${x.site} (${x.cards ? `${x.cards} cards, ` : ""}${x.note})`).join(", ");
                     throw new Error(`Found ${r.total} cards, but that doesn't cover the cards you own, so it may still be incomplete.${t ? ` Pages tried: ${t}.` : ""}`);
                   }
                 }, "Checklist refreshed"); }}>
-                {busy === "build" ? <span className="spinner" /> : "Find checklist again"}
+                {busy === "build" ? <span className="spinner" /> : "Web search (last resort)"}
               </button>
               <button className="btn small" disabled={!!busy} onClick={() => action("relink", relink)}>
                 {busy === "relink" ? <span className="spinner" /> : "Fix matching"}
@@ -356,7 +375,7 @@ export default function SetView({ set, entries, unlinked = [], mismatched = 0 }:
           <p className="small muted" style={{ margin: "8px 0" }}>
             Insert cards (e.g. Thunder &amp; Lightning, SkySlams) have their own checklists, so they&apos;re expected here. For any other card, the
             player isn&apos;t on this {entries.length}-card checklist: either the card is from a different set or year, or the checklist is
-            incomplete (<b>Set options</b> → <b>Find checklist again</b>).
+            incomplete (ask an admin to update it in <b>Admin → Set list</b>).
           </p>
           <ul className="want-list">
             {unlinked.map((c) => (

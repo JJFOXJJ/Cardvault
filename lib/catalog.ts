@@ -4,7 +4,7 @@
 
 import { db } from "./supabase";
 import { allRows } from "./paging";
-import { setKey } from "./shared";
+import { saveSharedSet, setKey } from "./shared";
 import { similarGroups } from "./collections";
 import { buildChecklist, getSet, linkExistingCards, type ChecklistEntry } from "./checklist";
 
@@ -41,7 +41,7 @@ export async function approvedChecklist(setName: string) {
   const name = await canonicalSetName(setName, sets);
   const s = name ? sets.find((x) => x.name === name) : null;
   if (!s || s.checklist.length < 1) return null;
-  return { list: s.checklist, url: s.checklist_url ?? "", source: "approved", shared: true, pricedAt: null };
+  return { list: s.checklist, url: s.checklist_url ?? "", source: "approved", shared: true, pricedAt: s.checklist.some((e) => e.est_aud != null) ? s.checklist_updated_at : null };
 }
 
 // ---------------------------------------------------------------- overview for the admin page
@@ -211,7 +211,9 @@ export async function setChecklist(id: string, list: ChecklistEntry[], source: s
   if (list.length < 1) throw new Error("The checklist is empty.");
   const s = await getCatalogSet(id);
   if (!s) throw new Error("Set not found");
-  const entries = list.map(({ number, name, subset }) => ({ number: number ?? null, name, subset: subset ?? null }));
+  const entries = list.map(({ number, name, subset, image_url, est_aud }) => ({
+    number: number ?? null, name, subset: subset ?? null, ...(image_url ? { image_url } : {}), ...(est_aud != null ? { est_aud } : {}),
+  }));
   const { error } = await db().from("catalog_sets").update({ checklist: entries, checklist_source: source, checklist_url: url, checklist_updated_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw new Error(error.message);
 
@@ -225,4 +227,30 @@ export async function setChecklist(id: string, list: ChecklistEntry[], source: s
     updated++;
   }
   return { cards: entries.length, profilesUpdated: updated };
+}
+
+/**
+ * Admin "Add a set": put the set on the approved list (or update it), save its checklist there and in the
+ * shared library, and update everyone already tracking it.
+ */
+export async function addSet(input: {
+  name: string; category?: string | null; year?: string | null; manufacturer?: string | null;
+  entries: ChecklistEntry[]; source: string; url?: string | null; aliases?: string[];
+}) {
+  const name = input.name.trim();
+  if (!name || name.length > 200) throw new Error("Give the set a name.");
+  const entries = input.entries
+    .map((e) => ({ number: e.number?.toString().trim() || null, name: (e.name ?? "").toString().trim().slice(0, 120), subset: e.subset?.toString().trim() || null, image_url: e.image_url ?? null, est_aud: e.est_aud ?? null }))
+    .filter((e) => e.name)
+    .slice(0, 3000);
+  if (!entries.length) throw new Error("The checklist is empty.");
+  const existing = await canonicalSetName(name);
+  const finalName = existing ?? (await approve(name));
+  const s = (await catalog()).sets.find((x) => x.name === finalName)!;
+  const keep = (v: string | null | undefined, old: string | null) => (v?.trim() ? v.trim().slice(0, 80) : old);
+  const aliases = [...new Set([...s.aliases, ...(input.aliases ?? []).map(low)])].filter((a) => a && a !== low(finalName));
+  await db().from("catalog_sets").update({ category: keep(input.category, s.category), year: keep(input.year, s.year), manufacturer: keep(input.manufacturer, s.manufacturer), aliases }).eq("id", s.id);
+  const r = await setChecklist(s.id, entries, input.source, input.url ?? null);
+  await saveSharedSet(finalName, input.source, input.url ?? null, entries, entries.some((e) => e.est_aud != null) ? new Date().toISOString() : null, { replace: true });
+  return { name: finalName, cards: r.cards, profilesUpdated: r.profilesUpdated, existed: !!existing };
 }

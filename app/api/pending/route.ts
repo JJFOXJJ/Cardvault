@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   if (me instanceof NextResponse) return me;
   const mine = cardsOf(me.id);
 
-  const body = (await req.json().catch(() => null)) as { front?: string; back?: string; hint?: string } | null;
+  const body = (await req.json().catch(() => null)) as { front?: string; back?: string; hint?: string; setName?: string } | null;
   if (!body?.front?.startsWith("data:image/")) return jsonError("Add a photo of the card first");
 
   try {
@@ -25,6 +25,8 @@ export async function POST(req: NextRequest) {
         back_photo_url,
         image_url: photo_url,
         hint: body.hint?.trim() || null,
+        // The set chosen when scanning — "Identify" later matches the card within this set.
+        set_name: body.setName?.trim().slice(0, 200) || null,
       })
       .select("id")
       .single();

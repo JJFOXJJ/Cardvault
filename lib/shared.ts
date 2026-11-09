@@ -112,7 +112,7 @@ export async function saveSharedPrice(key: string | null, v: { value_usd: Range 
 
 // ---------------------------------------------------------------- sets
 
-export type SharedEntry = { number: string | null; name: string; subset: string | null; est_aud?: number | null };
+export type SharedEntry = { number: string | null; name: string; subset: string | null; est_aud?: number | null; image_url?: string | null };
 export type SharedSet = { key: string; name: string; source: string | null; source_url: string | null; entries: SharedEntry[]; total: number; priced_at: string | null };
 
 export async function sharedSet(name: string): Promise<SharedSet | null> {
@@ -127,14 +127,18 @@ export async function sharedSet(name: string): Promise<SharedSet | null> {
  * Save a checklist for everyone. The first one stays, except: a web list replaces a pasted one, and with
  * `replaceSmaller` a clearly more complete list (20%+ more cards) replaces a smaller one.
  */
-export async function saveSharedSet(name: string, source: string, sourceUrl: string | null, entries: SharedEntry[], pricedAt: string | null, opts: { replaceSmaller?: boolean } = {}) {
+export async function saveSharedSet(name: string, source: string, sourceUrl: string | null, entries: SharedEntry[], pricedAt: string | null, opts: { replaceSmaller?: boolean; replace?: boolean } = {}) {
   const key = setKey(name);
-  if (!key || entries.length < 8) return;
-  const existing = await sharedSet(name);
-  const bigger = !!existing && opts.replaceSmaller && entries.length >= Math.ceil(existing.entries.length * 1.2);
-  if (existing && !(existing.source === "manual" && source !== "manual") && !bigger) return;
+  if (!key || entries.length < 1) return;
+  // A set an admin adds always replaces what's there; otherwise the first one stays (see above).
+  if (!opts.replace) {
+    if (entries.length < 8) return;
+    const existing = await sharedSet(name);
+    const bigger = !!existing && opts.replaceSmaller && entries.length >= Math.ceil(existing.entries.length * 1.2);
+    if (existing && !(existing.source === "manual" && source !== "manual") && !bigger) return;
+  }
   await db().from("shared_sets")
-    .upsert({ key, name, source, source_url: sourceUrl, entries: entries.map(({ number, name, subset, est_aud }) => ({ number, name, subset, est_aud: est_aud ?? null })),
+    .upsert({ key, name, source, source_url: sourceUrl, entries: entries.map(({ number, name, subset, est_aud, image_url }) => ({ number, name, subset, est_aud: est_aud ?? null, image_url: image_url ?? null })),
       total: entries.length, priced_at: pricedAt, updated_at: new Date().toISOString() }, { onConflict: "key" })
     .then(() => {}, () => {});
 }

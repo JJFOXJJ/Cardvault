@@ -6,8 +6,8 @@ import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function AddCard({ searchParams }: { searchParams: Promise<{ pending?: string }> }) {
-  const { pending: pendingId } = await searchParams;
+export default async function AddCard({ searchParams }: { searchParams: Promise<{ pending?: string; set?: string }> }) {
+  const { pending: pendingId, set } = await searchParams;
   const me = await currentProfile();
   if (!me) redirect("/login");
   const mine = cardsOf(me.id);
@@ -15,7 +15,7 @@ export default async function AddCard({ searchParams }: { searchParams: Promise<
   let pending: PendingCard | null = null;
   if (pendingId && /^[0-9a-f-]{36}$/i.test(pendingId)) {
     const { data } = await mine
-      .select("id, photo_url, back_photo_url, hint, status")
+      .select("id, photo_url, back_photo_url, hint, status, set_name")
       .eq("id", pendingId)
       .maybeSingle();
     if (data?.photo_url && data.status === "pending") pending = data as PendingCard;
@@ -26,7 +26,7 @@ export default async function AddCard({ searchParams }: { searchParams: Promise<
   return (
     <>
       <Header />
-      <Scanner key={pending?.id ?? "new"} pending={pending} waiting={count ?? 0} />
+      <Scanner key={pending?.id ?? "new"} pending={pending} waiting={count ?? 0} initialSet={set?.trim().slice(0, 200) || null} />
     </>
   );
 }

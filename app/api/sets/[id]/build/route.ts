@@ -10,13 +10,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (me instanceof NextResponse) return me;
   const set = await getSet(me.id, (await params).id);
   if (!set) return jsonError("Set not found", 404);
-  const body = (await req.json().catch(() => ({}))) as { pasted?: string; force?: boolean; url?: string };
+  const body = (await req.json().catch(() => ({}))) as { pasted?: string; force?: boolean; url?: string; lastResort?: boolean };
   try {
     // force: "Find checklist again" — ignore the shared library's copy and search afresh.
-    const r = await buildChecklist(me.id, set, body?.pasted, { force: !!body?.force, url: body?.url });
+    const r = await buildChecklist(me.id, set, body?.pasted, { force: !!body?.force, url: body?.url, lastResort: !!body?.lastResort });
     if (!r.ok) {
       const t = (r.tried ?? []).map((x) => `${x.site}: ${x.note}`).join("; ");
-      return jsonError(`Couldn't find a checklist for this set online.${t ? ` Tried — ${t}.` : ""}`, 404);
+      return jsonError(body?.lastResort
+        ? `Couldn't find a checklist for this set online.${t ? ` Tried — ${t}.` : ""}`
+        : "There's no checklist for this set in the approved list or shared library yet. An admin can add it (Admin → Add a set), or use the last-resort web search.", 404);
     }
     return NextResponse.json(r);
   } catch (e) {

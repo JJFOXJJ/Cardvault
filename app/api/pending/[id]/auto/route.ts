@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireProfile, jsonError } from "@/lib/auth";
 import { runIdentify } from "@/lib/identify";
+import { runIdentifyInSet } from "@/lib/scan";
 import { photosAsBase64, cardsOf } from "@/lib/supabase";
 import { keepPicture } from "@/lib/shared";
 import { round } from "@/lib/fx";
@@ -19,7 +20,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (row.status !== "pending") return NextResponse.json({ ok: true, skipped: true });
 
   try {
-    const r = await runIdentify(me.id, await photosAsBase64([row.photo_url, row.back_photo_url]), row.hint);
+    const photos = await photosAsBase64([row.photo_url, row.back_photo_url]);
+    // Saved with a set → match within that set (no set guessing). Without one → last-resort guess.
+    const r = row.set_name ? await runIdentifyInSet(me.id, photos, row.set_name, row.hint) : await runIdentify(me.id, photos, row.hint);
 
     // Store the first picture that downloads cleanly; otherwise keep the owner's photo.
     let image_url: string = row.photo_url;

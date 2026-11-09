@@ -67,7 +67,7 @@ export default function AdminSets() {
   return (
     <div className="stack">
       <div>
-        <h1>Set list</h1>
+        <div className="row"><h1>Set list</h1><span className="spacer" /><a href="/admin/sets/add" className="btn primary small">+ Add a set</a></div>
         <p className="muted" style={{ margin: "4px 0 0" }}>
           One standard name per set, for everyone. Merging or renaming moves everyone&apos;s cards to the approved name — nothing else on their cards changes.
           New names from scans show here as <b>pending</b>.
@@ -228,7 +228,7 @@ function Approved({ c, busy, act }: { c: Cat; busy: string; act: (k: string, b: 
         </div>
         <div className="row">
           <button className="btn small" disabled={!!busy} onClick={() => act(`f-${c.id}`, { action: "checklist", id: c.id, mode: "find" }, (r) => synced(r) + (r.incomplete ? " It may be incomplete — check it." : ""))}>
-            {busy === `f-${c.id}` ? <><span className="spinner" /> Searching…</> : "Find online"}
+            {busy === `f-${c.id}` ? <><span className="spinner" /> Searching the web…</> : "Web search (last resort)"}
           </button>
           <button className="btn small" disabled={!!busy} onClick={() => (text == null ? editList() : setText(null))}>{text == null ? (c.checklistCount ? "Edit list" : "Type or paste a list") : "Close list"}</button>
         </div>

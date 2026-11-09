@@ -66,7 +66,7 @@ export default function SetsList({ sets, untracked, unsorted }: { sets: SetSumma
       {untracked.length > 0 && (
         <section className="stack" style={{ gap: 8, marginTop: 10 }}>
           <h2 style={{ fontSize: 15 }}>Collections you could track</h2>
-          <p className="small muted" style={{ margin: 0 }}>Tap one to see every card in the set before tracking it. Tracking finds the full checklist so you can see what&apos;s missing — up to 2 searches, or none if it&apos;s already in the shared library.</p>
+          <p className="small muted" style={{ margin: 0 }}>Tap one to see every card in the set before tracking it. Tracking uses the set&apos;s checklist from the approved list or shared library (no searches).</p>
           {untracked.map((u) => (
             <div key={u.name} className="set-row quiet">
               <Link href={`/sets/preview?name=${encodeURIComponent(u.name)}`} style={{ flex: 1, minWidth: 0 }} className="preview-link">

@@ -87,7 +87,7 @@ Each person gets a profile with their own PIN, cards, collections and waiting li
 Run `supabase/migrations/005_sets.sql` once.
 - After you scan the first card from a new set, the app asks: **track the whole set** or **just this card**. Collections you didn't track are listed on the **Sets** tab with a *Track set* button.
 - **Preview before tracking:** on the Sets tab, tap any collection under *Collections you could track* to see every card in the set, with the ones you have ticked and a rough cost to complete. It's free if the checklist is already in the shared library (or it's Pokémon); otherwise **Load the full checklist** uses 1 search and saves it to the library, so tracking it afterwards costs no extra search.
-- Tracking finds the set's checklist: Pokémon from the official database (with pictures and prices); everything else from checklist web pages (Tavily reads them for the app; numbered lists are read directly, so big sets aren't cut short). Partial pages are combined; if the web only has partial lists, Gemini's own knowledge of the set is used — but only when it matches your cards (same players at the same numbers). Up to 2 searches, or none if it's already in the shared library. Cards filed in a set but not on its checklist are listed on the set page so you can spot wrong identifications. If it can't find one — or gets it wrong — paste your own on the set page (one card per line, e.g. `1 Captain America`).
+- Tracking uses the set's checklist from the **approved set list** or the shared library (no searching). If there isn't one yet, an admin adds it (see *Add a set*), or you can paste your own on the set page (one card per line, e.g. `1 Captain America`). **Web search (last resort)** is still on the set page's options, clearly labelled; it uses up to 2 searches. Cards filed in a set but not on its checklist are listed on the set page so you can spot wrong identifications.
 - Set page: **Grid**, **List** or **Binder** view (remembered per device), All/Owned/Missing filter, completion ring, value owned and rough cost to complete. Tap a missing card to tick it; **Tick off cards** mode lets you tap or drag across many.
 - Ticked cards are real cards in your collection and count toward your total.
 - **Pictures for ticked cards:** with *Find pictures when I tick* on (the default, remembered per device), each ticked card gets a picture in the background — 1 image search per card. *Find pictures for N cards* catches up on ticked cards that have none. Your own photos are never replaced; Pokémon cards already come with official pictures. Stops automatically at the monthly search limit.
@@ -114,6 +114,19 @@ Run `supabase/migrations/008_set_catalog.sql` once. Then Admin overview → **Se
 - **Possible duplicates** are grouped (same words in any order, "93-94" = "1993-94"). Pick or type the approved name and **Merge**: everyone's cards are filed under it — nothing else on their cards changes. Old spellings become aliases, so future scans and edits snap to the approved name.
 - Approved sets: rename (cards follow), category / year / maker, and the **checklist** — load from a link, find online, or type/paste and edit it. Saving a checklist updates it straight away for everyone tracking the set (cards re-matched by player; ticked cards stay ticked).
 - Scans choose from the approved list, and the collection dropdown shows approved sets (✓).
+
+## Add a set (admins) — the free route for checklists
+Admin overview → Set list → **+ Add a set**. Only admins can open it; what they add is the approved list everyone scans against.
+- **Pokémon:** a searchable catalogue of every set from the free Pokémon TCG API. **Add** loads the full checklist, with official pictures and market prices, into the approved list and the shared library. If that API is down (its owners plan to retire it), the free TCGdex API is used instead, and sets already added stay in the library either way.
+- **Everything else** (sports, Marvel, Simpsons…): paste a link to a checklist page, or upload a CSV (columns like Number, Name and optionally Subset; comma, tab or semicolon). A collection export works too, and only the named set's rows are kept. You get the list to check and edit (with warnings for gaps or repeated numbers) before **Save to shared library**. Saving updates everyone already tracking the set.
+- *Search the web* is there only as a last resort.
+
+## Scanning: pick the set first
+- On **Add a card**, choose the set first. It remembers the last set, and **Scan cards into this set** on a set page opens it ready. Identify stays off until a set is chosen.
+- The AI then reads only the card number and name and matches them to that set's checklist. It never names the set; the card is saved under the set you picked, spelled as approved. A banner says how it matched. If a player has two cards in the set and there's no back photo, it picks the one nearest your other cards and shows both numbers to tap.
+- Insert cards that aren't on the base checklist are saved as read and marked as an insert. A set with no checklist yet saves exactly what was read.
+- **Not listed — let the AI guess the set** is the last resort: the old web-search identification, where the AI names the set itself (it can be wrong).
+- Waiting-list photos, bulk uploads and **Re-identify** use the chosen set too.
 
 ## Admin overview, backups & keep-awake
 - Profiles → **Admin overview** (admins only): totals for everyone and a per-profile table — numbers only, never anyone's cards.
@@ -143,7 +156,7 @@ Run `supabase/migrations/004_usage.sql` once. The app then counts every Tavily a
 - Photographing the **back** as well as the front noticeably improves identification for sports and non-sport cards (that's where the year and card number live).
 - If it gets the card wrong, type a hint ("1994 Fleer Ultra, gold parallel") and tap **Retry**.
 - Prices are a little rougher than an AI that browses many pages itself: Gemini sees one page of search results. Tap **Update value** on your best cards now and then, and check the sources it shows.
-- Pokémon cards are matched against the official Pokémon TCG database for exact images and TCGplayer prices.
+- Pokémon cards are matched against the set's checklist from the Pokémon TCG API (TCGdex as backup) for exact images and TCGplayer prices.
 
 ## Project layout
 ```

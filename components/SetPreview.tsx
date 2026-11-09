@@ -133,13 +133,17 @@ export default function SetPreview({ name }: { name: string }) {
               <p className="small" style={{ margin: 0 }}>Couldn&apos;t find a checklist online for this set. Track it anyway and paste the checklist yourself on the set page (one card per line).</p>
             ) : (
               <>
-                <b>See every card in this set</b>
+                <b>No checklist for this set yet</b>
                 <p className="small muted" style={{ margin: 0 }}>
-                  Nobody has looked up this set&apos;s checklist yet. Loading it uses 1 search; it&apos;s then saved to the shared library, so tracking it (or anyone else previewing it) costs nothing extra.
+                  It isn&apos;t in the approved list or shared library. An admin can add it under <b>Admin → Add a set</b> (Pokémon from the official database; others from a checklist link or CSV).
                 </p>
-                <button className="btn small" style={{ justifySelf: "start" }} onClick={() => load(true)} disabled={loading}>
-                  {loading ? <><span className="spinner" /> Finding the checklist… (15–40 seconds)</> : "Load the full checklist"}
-                </button>
+                <details className="last-resort">
+                  <summary>Last resort: search the web for this checklist</summary>
+                  <p className="small muted" style={{ margin: "6px 0" }}>Uses up to 2 searches and reads whatever pages it finds — results can be incomplete or wrong.</p>
+                  <button className="btn ghost small" onClick={() => load(true)} disabled={loading}>
+                    {loading ? <><span className="spinner" /> Searching the web… (15–40 seconds)</> : "Search the web (last resort)"}
+                  </button>
+                </details>
               </>
             )}
           </section>
